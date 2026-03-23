@@ -100,3 +100,55 @@ def test_conditioning_registration():
     assert "model_config" in types_
     assert "image" in types_
     assert "mask" in types_
+
+
+def test_full_sampler_registration():
+    from nodes.nodes_sampler import SegviGenFullSampler
+    node = SegviGenFullSampler
+    assert node.CATEGORY == "SegviGen"
+    assert "SEGVIGEN_SEG_RESULT" in node.RETURN_TYPES
+    req = node.INPUT_TYPES()["required"]
+    assert "model_config" in req
+    assert "slat" in req
+    assert "conditioning" in req
+    opt = node.INPUT_TYPES().get("optional", {})
+    assert "guidance_rescale" in opt
+    assert "seed" in opt
+
+
+def test_interactive_sampler_registration():
+    from nodes.nodes_sampler import SegviGenInteractiveSampler
+    node = SegviGenInteractiveSampler
+    assert node.CATEGORY == "SegviGen"
+    assert "SEGVIGEN_SEG_RESULT" in node.RETURN_TYPES
+    req = node.INPUT_TYPES()["required"]
+    assert "points" in req
+    assert "slat" in req
+
+
+def test_point_input_registration():
+    from nodes.nodes_points import SegviGenPointInput
+    node = SegviGenPointInput
+    assert node.CATEGORY == "SegviGen"
+    assert "SEGVIGEN_POINTS" in node.RETURN_TYPES
+    req = node.INPUT_TYPES()["required"]
+    assert "num_points" in req
+    opt = node.INPUT_TYPES().get("optional", {})
+    assert "point_1_x" in opt
+    assert "point_10_z" in opt  # all 10 points present
+
+
+def test_point_input_builds_correct_list():
+    from nodes.nodes_points import SegviGenPointInput
+    node = SegviGenPointInput()
+    result, = node.build_points(num_points=2, point_1_x=10, point_1_y=20, point_1_z=30,
+                                 point_2_x=5, point_2_y=5, point_2_z=5)
+    assert result == [[10, 20, 30], [5, 5, 5]]
+
+
+def test_point_input_respects_num_points():
+    from nodes.nodes_points import SegviGenPointInput
+    node = SegviGenPointInput()
+    result, = node.build_points(num_points=1, point_1_x=7, point_1_y=8, point_1_z=9,
+                                 point_2_x=1, point_2_y=2, point_2_z=3)
+    assert len(result) == 1  # only 1 point despite point_2 being provided
