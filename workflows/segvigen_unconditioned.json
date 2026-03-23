@@ -1,0 +1,199 @@
+{
+  "id": "segvigen-unconditioned-demo",
+  "revision": 0,
+  "last_node_id": 8,
+  "last_link_id": 9,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadTrellis2Models",
+      "pos": [-450, -130],
+      "size": [270, 106],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "resolution",   "name": "resolution",   "type": "COMBO", "widget": {"name": "resolution"},   "link": null},
+        {"localized_name": "precision",    "name": "precision",    "type": "COMBO", "shape": 7, "widget": {"name": "precision"},    "link": null},
+        {"localized_name": "attn_backend", "name": "attn_backend", "type": "COMBO", "shape": 7, "widget": {"name": "attn_backend"}, "link": null}
+      ],
+      "outputs": [
+        {"localized_name": "model_config", "name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "links": [1, 2, 3], "slot_index": 0}
+      ],
+      "properties": {"cnr_id": "ComfyUI-TRELLIS2", "Node name for S&R": "LoadTrellis2Models"},
+      "widgets_values": ["512", "auto", "auto"]
+    },
+    {
+      "id": 2,
+      "type": "SegviGenNullConditioning",
+      "pos": [230, 50],
+      "size": [310, 80],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "model_config", "name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 1}
+      ],
+      "outputs": [
+        {"localized_name": "conditioning", "name": "conditioning", "type": "SEGVIGEN_COND", "links": [4], "slot_index": 0}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenNullConditioning"},
+      "widgets_values": []
+    },
+    {
+      "id": 3,
+      "type": "SegviGenGLBtoVoxel",
+      "pos": [-450, 200],
+      "size": [320, 150],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "trimesh",          "name": "trimesh",          "type": "TRIMESH", "link": null},
+        {"localized_name": "glb_file",         "name": "glb_file",         "type": "COMBO",   "widget": {"name": "glb_file"},         "link": null},
+        {"localized_name": "voxel_resolution", "name": "voxel_resolution", "type": "COMBO",   "widget": {"name": "voxel_resolution"}, "link": null},
+        {"localized_name": "simplify_faces",   "name": "simplify_faces",   "type": "INT",     "shape": 7, "widget": {"name": "simplify_faces"}, "link": null}
+      ],
+      "outputs": [
+        {"localized_name": "voxel", "name": "voxel", "type": "SEGVIGEN_VOXEL", "links": [5], "slot_index": 0}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenGLBtoVoxel"},
+      "widgets_values": ["output/trellis2_20260227_225733.glb", 64, 100000]
+    },
+    {
+      "id": 4,
+      "type": "SegviGenVoxelEncode",
+      "pos": [-90, 200],
+      "size": [310, 100],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "model_config", "name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 2},
+        {"localized_name": "voxel",        "name": "voxel",        "type": "SEGVIGEN_VOXEL",        "link": 5}
+      ],
+      "outputs": [
+        {"localized_name": "slat", "name": "slat", "type": "SEGVIGEN_SLAT", "links": [6], "slot_index": 0}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenVoxelEncode"},
+      "widgets_values": []
+    },
+    {
+      "id": 5,
+      "type": "SegviGenFullSampler",
+      "pos": [580, 200],
+      "size": [340, 260],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "model_config", "name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 3},
+        {"localized_name": "slat",         "name": "slat",         "type": "SEGVIGEN_SLAT",         "link": 6},
+        {"localized_name": "conditioning", "name": "conditioning", "type": "SEGVIGEN_COND",         "link": 4},
+        {"localized_name": "seed",                    "name": "seed",                    "type": "INT",   "shape": 7, "widget": {"name": "seed"},                    "link": null},
+        {"localized_name": "steps",                   "name": "steps",                   "type": "INT",   "shape": 7, "widget": {"name": "steps"},                   "link": null},
+        {"localized_name": "guidance_strength",       "name": "guidance_strength",       "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_strength"},       "link": null},
+        {"localized_name": "guidance_rescale",        "name": "guidance_rescale",        "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_rescale"},        "link": null},
+        {"localized_name": "guidance_interval_start", "name": "guidance_interval_start", "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_interval_start"}, "link": null},
+        {"localized_name": "guidance_interval_end",   "name": "guidance_interval_end",   "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_interval_end"},   "link": null}
+      ],
+      "outputs": [
+        {"localized_name": "seg_result", "name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "links": [7, 8], "slot_index": 0}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenFullSampler"},
+      "widgets_values": [0, "fixed", 12, 7.5, 0.0, 0.6, 0.9]
+    },
+    {
+      "id": 6,
+      "type": "SegviGenRenderPreview",
+      "pos": [970, 80],
+      "size": [270, 110],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "seg_result", "name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "link": 7},
+        {"localized_name": "num_views",  "name": "num_views",  "type": "INT", "shape": 7, "widget": {"name": "num_views"},  "link": null},
+        {"localized_name": "resolution", "name": "resolution", "type": "INT", "shape": 7, "widget": {"name": "resolution"}, "link": null}
+      ],
+      "outputs": [
+        {"localized_name": "preview_images", "name": "preview_images", "type": "IMAGE", "links": [9], "slot_index": 0}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenRenderPreview"},
+      "widgets_values": [8, 512]
+    },
+    {
+      "id": 7,
+      "type": "SaveImage",
+      "pos": [1290, 80],
+      "size": [260, 80],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "images",          "name": "images",          "type": "IMAGE",  "link": 9},
+        {"localized_name": "filename_prefix", "name": "filename_prefix", "type": "STRING", "widget": {"name": "filename_prefix"}, "link": null}
+      ],
+      "outputs": [],
+      "properties": {"cnr_id": "comfy-core", "Node name for S&R": "SaveImage"},
+      "widgets_values": ["segvigen_uncond"]
+    },
+    {
+      "id": 8,
+      "type": "SegviGenExportParts",
+      "pos": [970, 280],
+      "size": [320, 150],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "seg_result",        "name": "seg_result",        "type": "SEGVIGEN_SEG_RESULT", "link": 8},
+        {"localized_name": "texture_size",      "name": "texture_size",      "type": "COMBO", "widget": {"name": "texture_size"},      "link": null},
+        {"localized_name": "max_faces",         "name": "max_faces",         "type": "INT",   "shape": 7, "widget": {"name": "max_faces"},         "link": null},
+        {"localized_name": "min_segment_faces", "name": "min_segment_faces", "type": "INT",   "shape": 7, "widget": {"name": "min_segment_faces"}, "link": null}
+      ],
+      "outputs": [
+        {"localized_name": "output_paths", "name": "output_paths", "type": "STRING", "links": null, "slot_index": 0}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenExportParts"},
+      "widgets_values": ["2048", 100000, 50]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "TRELLIS2_MODEL_CONFIG"],
+    [2, 1, 0, 4, 0, "TRELLIS2_MODEL_CONFIG"],
+    [3, 1, 0, 5, 0, "TRELLIS2_MODEL_CONFIG"],
+    [4, 2, 0, 5, 2, "SEGVIGEN_COND"],
+    [5, 3, 0, 4, 1, "SEGVIGEN_VOXEL"],
+    [6, 4, 0, 5, 1, "SEGVIGEN_SLAT"],
+    [7, 5, 0, 6, 0, "SEGVIGEN_SEG_RESULT"],
+    [8, 5, 0, 8, 0, "SEGVIGEN_SEG_RESULT"],
+    [9, 6, 0, 7, 0, "IMAGE"]
+  ],
+  "groups": [
+    {
+      "title": "Null Conditioning (no image needed)",
+      "bounding": [210, 20, 350, 130],
+      "color": "#5a4a7e",
+      "font_size": 14
+    },
+    {
+      "title": "Mesh → Voxel → SLAT",
+      "bounding": [-470, 165, 440, 180],
+      "color": "#3d6b44",
+      "font_size": 14
+    },
+    {
+      "title": "Segmentation Output",
+      "bounding": [555, 165, 760, 290],
+      "color": "#7e4a4a",
+      "font_size": 14
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {"scale": 0.65, "offset": [540, 200]},
+    "workflowRendererVersion": "LG"
+  },
+  "version": 0.4
+}
