@@ -1,0 +1,15 @@
+[project]
+name = "ComfyUI-SegviGen"
+description = "ComfyUI nodes for SegviGen 3D part segmentation (full + interactive modes)"
+version = "0.1.0"
+license = "MIT"
+requires-python = ">=3.10"
+readme = "README.md"
+
+[project.urls]
+Repository = "https://github.com/your-repo/ComfyUI-SegviGen"
+
+[tool.comfy]
+PublisherId = "local"
+DisplayName = "ComfyUI-SegviGen"
+Icon = ""

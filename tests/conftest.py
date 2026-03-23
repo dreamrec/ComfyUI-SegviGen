@@ -1,0 +1,41 @@
+"""Shared test fixtures for ComfyUI-SegviGen tests."""
+import sys
+import os
+import numpy as np
+import pytest
+
+# Make package importable without ComfyUI present
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# Mock folder_paths BEFORE importing the package.
+# Use unconditional assignment (not setdefault) so the mock always wins,
+# even in environments where a partial ComfyUI install might provide folder_paths.
+# __file__ = tests/conftest.py -> 3 levels up = ComfyUI root
+import types
+_fp = types.ModuleType("folder_paths")
+_COMFYUI_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_fp.base_path = _COMFYUI_ROOT
+_fp.models_dir = os.path.join(_COMFYUI_ROOT, "models")
+_fp.output_directory = os.path.join(_COMFYUI_ROOT, "output")
+sys.modules["folder_paths"] = _fp  # unconditional -- always use the mock in tests
+
+
+@pytest.fixture
+def cube_trimesh():
+    """A simple watertight cube mesh for voxel tests."""
+    import trimesh
+    return trimesh.creation.box(extents=[1.0, 1.0, 1.0])
+
+
+@pytest.fixture
+def dummy_image_tensor():
+    """A 1x64x64x3 float32 ComfyUI IMAGE tensor."""
+    import torch
+    return torch.rand(1, 64, 64, 3, dtype=torch.float32)
+
+
+@pytest.fixture
+def dummy_mask_tensor():
+    """A 1x64x64 float32 ComfyUI MASK tensor (all foreground)."""
+    import torch
+    return torch.ones(1, 64, 64, dtype=torch.float32)
