@@ -1,8 +1,16 @@
+import importlib.util as _ilu
 import logging
 import os
 import sys
 
 log = logging.getLogger("segvigen")
+
+# Absolute path to this package directory.  Must be on sys.path so that
+# absolute imports inside node sub-files (e.g. `from core.voxel import ...`)
+# resolve to *our* core/ directory rather than something else on the path.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 
 
 def _find_trellis2_nodes():
@@ -36,14 +44,34 @@ def _find_trellis2_nodes():
         log.info(f"SegviGen: added TRELLIS2 nodes path: {trellis2_nodes}")
 
 
-_find_trellis2_nodes()
+def _load_nodes_package():
+    """
+    Load our nodes/ sub-package by file path, bypassing sys.modules['nodes'].
 
-# Absolute import (not `from .nodes import ...`) because:
-# 1. The directory name "ComfyUI-SegviGen" contains a hyphen, which is invalid
-#    as a Python package identifier. ComfyUI loads __init__.py via importlib
-#    spec_from_file_location, so relative imports cannot resolve the package.
-# 2. conftest.py adds this directory to sys.path, making `nodes` importable
-#    absolutely in both test and production environments.
-from nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+    ComfyUI's own nodes.py is loaded early and cached as sys.modules['nodes'],
+    so a plain `from nodes import ...` would silently return ComfyUI's mappings
+    instead of ours.  Using importlib with a unique module name avoids that.
+    """
+    _nodes_dir = os.path.join(_THIS_DIR, "nodes")
+    _nodes_init = os.path.join(_nodes_dir, "__init__.py")
+    _mod_name = "ComfyUI_SegviGen_nodes"
+
+    spec = _ilu.spec_from_file_location(
+        _mod_name,
+        _nodes_init,
+        submodule_search_locations=[_nodes_dir],
+    )
+    mod = _ilu.module_from_spec(spec)
+    # Register before exec so intra-package relative imports resolve correctly.
+    sys.modules[_mod_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_find_trellis2_nodes()
+_nodes_mod = _load_nodes_package()
+
+NODE_CLASS_MAPPINGS = _nodes_mod.NODE_CLASS_MAPPINGS
+NODE_DISPLAY_NAME_MAPPINGS = _nodes_mod.NODE_DISPLAY_NAME_MAPPINGS
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
