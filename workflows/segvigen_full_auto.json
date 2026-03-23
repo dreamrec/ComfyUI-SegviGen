@@ -90,7 +90,7 @@
       "mode": 0,
       "inputs": [
         {"localized_name": "trimesh",          "name": "trimesh",          "type": "TRIMESH", "link": null},
-        {"localized_name": "glb_path",         "name": "glb_path",         "type": "STRING",  "widget": {"name": "glb_path"},         "link": null},
+        {"localized_name": "glb_file",         "name": "glb_file",         "type": "COMBO",   "widget": {"name": "glb_file"},         "link": null},
         {"localized_name": "voxel_resolution", "name": "voxel_resolution", "type": "COMBO",   "widget": {"name": "voxel_resolution"}, "link": null},
         {"localized_name": "simplify_faces",   "name": "simplify_faces",   "type": "INT",     "widget": {"name": "simplify_faces"},   "link": null, "shape": 7}
       ],
@@ -98,7 +98,7 @@
         {"localized_name": "voxel", "name": "voxel", "type": "SEGVIGEN_VOXEL", "links": [7], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenGLBtoVoxel"},
-      "widgets_values": ["C:/Users/dr5090/Documents/ComfyUI/input/your_mesh.glb", 64, 100000]
+      "widgets_values": ["output/trellis2_20260227_225733.glb", 64, 100000]
     },
     {
       "id": 6,

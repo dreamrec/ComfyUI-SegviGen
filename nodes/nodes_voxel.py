@@ -22,13 +22,36 @@ class SegviGenGLBtoVoxel:
 
     @classmethod
     def INPUT_TYPES(cls):
+        import folder_paths
+        import os
+
+        # Scan output/ then input/ for mesh files, most-recently-named first.
+        _MESH_EXTS = (".glb", ".obj", ".ply")
+        choices = []
+        for base, tag in [
+            (folder_paths.get_output_directory(), "output"),
+            (folder_paths.get_input_directory(), "input"),
+        ]:
+            if os.path.isdir(base):
+                files = sorted(
+                    (f for f in os.listdir(base)
+                     if os.path.isfile(os.path.join(base, f))
+                     and f.lower().endswith(_MESH_EXTS)),
+                    reverse=True,  # newest timestamps first (TRELLIS2 naming)
+                )
+                choices.extend(f"{tag}/{f}" for f in files)
+
+        if not choices:
+            choices = ["(no mesh files found)"]
+
         return {
             "required": {},
             "optional": {
-                "trimesh": ("TRIMESH", {"tooltip": "Mesh from TRELLIS2 or other 3D nodes"}),
-                "glb_path": ("STRING", {
-                    "default": "",
-                    "tooltip": "Absolute path to a .glb file (used if TRIMESH not connected)",
+                "trimesh": ("TRIMESH", {
+                    "tooltip": "Mesh directly from a TRELLIS2 node — skips glb_file",
+                }),
+                "glb_file": (choices, {
+                    "tooltip": "GLB/OBJ/PLY file from output/ or input/ folder",
                 }),
                 "voxel_resolution": (VOXEL_RESOLUTIONS, {
                     "default": 64,
@@ -41,12 +64,31 @@ class SegviGenGLBtoVoxel:
             },
         }
 
-    def convert(self, trimesh=None, glb_path="", voxel_resolution=64, simplify_faces=100_000):
+    def convert(self, trimesh=None, glb_file="", voxel_resolution=64, simplify_faces=100_000):
+        import folder_paths
+        import os
         from core.voxel import mesh_to_voxel_grid
 
-        source = trimesh if trimesh is not None else glb_path
-        if source is None or (isinstance(source, str) and not source.strip()):
-            raise ValueError("SegviGenGLBtoVoxel: provide either 'trimesh' or 'glb_path'")
+        if trimesh is not None:
+            source = trimesh
+        else:
+            if not glb_file or glb_file.startswith("("):
+                raise ValueError(
+                    "SegviGenGLBtoVoxel: connect a TRIMESH input or select a mesh file "
+                    "from the glb_file dropdown."
+                )
+            # Resolve prefixed path (e.g. "output/trellis2_xxx.glb")
+            if glb_file.startswith("output/"):
+                source = os.path.join(folder_paths.get_output_directory(), glb_file[7:])
+            elif glb_file.startswith("input/"):
+                source = os.path.join(folder_paths.get_input_directory(), glb_file[6:])
+            else:
+                source = glb_file  # raw absolute path fallback
+
+            if not os.path.isfile(source):
+                raise FileNotFoundError(
+                    f"SegviGenGLBtoVoxel: mesh file not found: {source}"
+                )
 
         log.info(f"SegviGen: converting mesh to {voxel_resolution}³ voxel grid")
         voxel = mesh_to_voxel_grid(source, resolution=voxel_resolution,
