@@ -5,8 +5,6 @@ SegviGen sampler nodes:
 """
 import logging
 import os
-import torch
-import comfy.model_management as mm
 
 from .helpers import check_interrupt, make_progress
 
@@ -72,6 +70,7 @@ class SegviGenFullSampler:
         guidance_interval_start: float = 0.6,
         guidance_interval_end: float = 0.9,
     ):
+        import comfy.model_management as mm
         from core.pipeline import run_full_segmentation
 
         ckpt_path = _get_checkpoint_path()
@@ -141,6 +140,9 @@ class SegviGenInteractiveSampler:
         guidance_interval_start: float = 0.6,
         guidance_interval_end: float = 0.9,
     ):
+        import torch
+        import comfy.model_management as mm
+        import comfy.model_patcher
         from core.pipeline import Sampler, _add_noise, _decode_to_labels
         from core.interactive import Gen3DSegInteractive, encode_points_for_sampler
         import safetensors.torch

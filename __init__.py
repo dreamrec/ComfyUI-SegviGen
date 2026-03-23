@@ -2,8 +2,29 @@ import importlib.util as _ilu
 import logging
 import os
 import sys
+import types as _types
 
 log = logging.getLogger("segvigen")
+
+# ---------------------------------------------------------------------------
+# comfy_aimdo stub
+# ---------------------------------------------------------------------------
+# ComfyUI Desktop added comfy_aimdo.host_buffer in a recent update.
+# The TRELLIS2 comfy-env pixi worker may have an older comfy_aimdo that
+# pre-dates this submodule.  Install a no-op stub so comfy.pinned_memory
+# can still be imported inside the worker without crashing.
+# setdefault() means we never replace a real, functioning installation.
+try:
+    import comfy_aimdo.host_buffer  # noqa: F401 — just test importability
+except (ImportError, ModuleNotFoundError):
+    class _StubModule(_types.ModuleType):
+        """Returns a no-op callable for any unknown attribute."""
+        def __getattr__(self, name):
+            return lambda *a, **kw: None
+
+    sys.modules.setdefault("comfy_aimdo", _StubModule("comfy_aimdo"))
+    sys.modules.setdefault("comfy_aimdo.host_buffer",
+                           _StubModule("comfy_aimdo.host_buffer"))
 
 # Absolute path to this package directory.  Must be on sys.path so that
 # absolute imports inside node sub-files (e.g. `from core.voxel import ...`)

@@ -8,9 +8,7 @@ BiRefNet maintains its own internal model singleton — this is TRELLIS2's
 implementation detail, not a SegviGen concern.
 """
 import logging
-import torch
 import numpy as np
-import comfy.model_management as mm
 
 from .helpers import tensor_to_pil, pil_to_tensor, check_interrupt
 
@@ -40,7 +38,9 @@ class SegviGenPreprocess:
             },
         }
 
-    def preprocess(self, image: torch.Tensor, background_color: str = "black"):
+    def preprocess(self, image, background_color: str = "black"):
+        import torch
+        import comfy.model_management as mm
         from rembg.BiRefNet import BiRefNet
         from PIL import Image
 

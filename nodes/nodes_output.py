@@ -6,8 +6,6 @@ SegviGen output nodes:
 import logging
 import os
 from datetime import datetime
-import torch
-import comfy.model_management as mm
 
 from .helpers import check_interrupt
 
@@ -35,6 +33,7 @@ class SegviGenRenderPreview:
         }
 
     def render(self, seg_result: dict, num_views: int = 8, resolution: int = 512):
+        import comfy.model_management as mm
         from core.renderer import render_segmentation_preview
 
         check_interrupt()

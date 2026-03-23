@@ -15,8 +15,6 @@ Returns SEGVIGEN_COND dict with keys:
   }
 """
 import logging
-import torch
-import comfy.model_management as mm
 
 from .helpers import check_interrupt
 
@@ -43,7 +41,9 @@ class SegviGenGetConditioning:
             },
         }
 
-    def condition(self, model_config: dict, image: torch.Tensor, mask: torch.Tensor):
+    def condition(self, model_config: dict, image, mask):
+        import torch  # noqa: F401 — needed by stages.run_conditioning
+        import comfy.model_management as mm
         from stages import run_conditioning  # ComfyUI-TRELLIS2/nodes/stages.py
 
         check_interrupt()
@@ -99,6 +99,8 @@ class SegviGenNullConditioning:
         }
 
     def make_null(self, model_config: dict):
+        import torch
+        import comfy.model_management as mm
         from stages import run_conditioning  # ComfyUI-TRELLIS2/nodes/stages.py
 
         check_interrupt()
