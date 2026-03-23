@@ -149,8 +149,9 @@ def get_encoder_patcher(model_config: dict, models_dir: str):
     import comfy.model_management as mm
     import comfy.model_patcher
 
-    # TODO: verify exact filename against Aero-Ex/SegviGen HuggingFace repo
-    encoder_filename = "shape_vae_encoder.safetensors"
+    # The encoder weights are embedded in the main checkpoint (no separate file).
+    # Verified: Aero-Ex/SegviGen HF repo only has full_seg.safetensors (2.58 GB).
+    encoder_filename = "full_seg.safetensors"
     encoder_path = os.path.join(models_dir, encoder_filename)
 
     if not os.path.exists(encoder_path):

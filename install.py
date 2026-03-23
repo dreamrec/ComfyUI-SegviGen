@@ -13,7 +13,11 @@ import logging
 log = logging.getLogger("segvigen")
 
 HF_REPO = "Aero-Ex/SegviGen"
-CHECKPOINT_FILENAME = "segvigen_flow_model.safetensors"  # verify against actual repo
+
+# Verified against https://huggingface.co/Aero-Ex/SegviGen/tree/main (2025-03-23):
+#   full_seg.safetensors           — 2.58 GB  base segmentation model
+#   full_seg_w_2d_map.safetensors  — 2.62 GB  variant with 2D map features
+CHECKPOINT_FILENAME = "full_seg.safetensors"
 
 
 def ensure_checkpoint(models_dir: str) -> str:
@@ -58,6 +62,17 @@ def ensure_checkpoint(models_dir: str) -> str:
         ) from e
 
     return downloaded_path
+
+
+def ensure_encoder_checkpoint(models_dir: str) -> str:
+    """
+    Return path to the SegviGen checkpoint that contains the shape encoder.
+
+    The encoder weights are NOT in a separate file — they are embedded in the
+    main full_seg.safetensors checkpoint under encoder key prefixes.
+    This function is an alias for ensure_checkpoint().
+    """
+    return ensure_checkpoint(models_dir)
 
 
 if __name__ == "__main__":
