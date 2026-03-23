@@ -1,7 +1,6 @@
 """Shared test fixtures for ComfyUI-SegviGen tests."""
 import sys
 import os
-import numpy as np
 import pytest
 
 # Make package importable without ComfyUI present
@@ -17,6 +16,12 @@ _COMFYUI_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 _fp.base_path = _COMFYUI_ROOT
 _fp.models_dir = os.path.join(_COMFYUI_ROOT, "models")
 _fp.output_directory = os.path.join(_COMFYUI_ROOT, "output")
+_fp.folder_names_and_paths = {}
+
+def _get_folder_paths(folder_name):
+    return []
+
+_fp.get_folder_paths = _get_folder_paths
 sys.modules["folder_paths"] = _fp  # unconditional -- always use the mock in tests
 
 

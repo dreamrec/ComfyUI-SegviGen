@@ -4,7 +4,7 @@ packages = ["nvdiffrast", "flex_gemm", "cumesh", "o_voxel", "nvdiffrec_render",
 
 [pypi-dependencies]
 # HuggingFace models
-huggingface_hub = ">=0.20.0"
+huggingface_hub = ">=0.20.0,<1.0.0"
 transformers = ">=4.56.0"
 safetensors = "*"
 timm = "*"
