@@ -152,3 +152,34 @@ def test_point_input_respects_num_points():
     result, = node.build_points(num_points=1, point_1_x=7, point_1_y=8, point_1_z=9,
                                  point_2_x=1, point_2_y=2, point_2_z=3)
     assert len(result) == 1  # only 1 point despite point_2 being provided
+
+
+def test_render_preview_registration():
+    from nodes.nodes_output import SegviGenRenderPreview
+    node = SegviGenRenderPreview
+    assert node.CATEGORY == "SegviGen"
+    assert "IMAGE" in node.RETURN_TYPES
+    req = node.INPUT_TYPES()["required"]
+    assert "seg_result" in req
+
+
+def test_export_parts_registration():
+    from nodes.nodes_output import SegviGenExportParts
+    node = SegviGenExportParts
+    assert node.CATEGORY == "SegviGen"
+    assert "STRING" in node.RETURN_TYPES
+    assert node.OUTPUT_NODE is True
+    opt = node.INPUT_TYPES().get("optional", {})
+    assert "texture_size" in opt
+    assert "min_segment_faces" in opt
+
+
+def test_all_9_nodes_in_mappings():
+    from nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+    expected = {
+        "SegviGenGLBtoVoxel", "SegviGenVoxelEncode", "SegviGenPreprocess",
+        "SegviGenGetConditioning", "SegviGenFullSampler", "SegviGenInteractiveSampler",
+        "SegviGenPointInput", "SegviGenRenderPreview", "SegviGenExportParts",
+    }
+    assert set(NODE_CLASS_MAPPINGS.keys()) == expected
+    assert set(NODE_DISPLAY_NAME_MAPPINGS.keys()) == expected
