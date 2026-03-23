@@ -38,6 +38,12 @@ def _find_trellis2_nodes():
 
 _find_trellis2_nodes()
 
+# Absolute import (not `from .nodes import ...`) because:
+# 1. The directory name "ComfyUI-SegviGen" contains a hyphen, which is invalid
+#    as a Python package identifier. ComfyUI loads __init__.py via importlib
+#    spec_from_file_location, so relative imports cannot resolve the package.
+# 2. conftest.py adds this directory to sys.path, making `nodes` importable
+#    absolutely in both test and production environments.
 from nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

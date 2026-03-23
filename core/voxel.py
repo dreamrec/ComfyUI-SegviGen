@@ -102,12 +102,23 @@ def mesh_to_voxel_grid(source, resolution: int = 64, simplify_faces: int = 100_0
             "Mesh produced empty voxel grid — check mesh is watertight and non-degenerate"
         )
 
-    # Crop/pad to exactly [resolution, resolution, resolution]
+    # Crop or pad to exactly [resolution, resolution, resolution], centered.
+    # Centering ensures the mesh occupies the middle of the voxel cube regardless
+    # of whether the trimesh grid came out slightly smaller or larger than 'resolution'.
     target = np.zeros((resolution, resolution, resolution), dtype=bool)
-    # s clips grid dims to resolution; t indexes into target (same size as s by construction)
-    s = tuple(slice(0, min(d, resolution)) for d in grid.shape)
-    t = tuple(slice(0, min(resolution, d)) for d in grid.shape)
-    target[t] = grid[s]
+    slices_grid = [slice(None)] * 3
+    slices_target = [slice(None)] * 3
+    for ax in range(3):
+        gd = grid.shape[ax]
+        if gd >= resolution:
+            start_g = (gd - resolution) // 2
+            slices_grid[ax] = slice(start_g, start_g + resolution)
+            slices_target[ax] = slice(0, resolution)
+        else:
+            start_t = (resolution - gd) // 2
+            slices_grid[ax] = slice(0, gd)
+            slices_target[ax] = slice(start_t, start_t + gd)
+    target[tuple(slices_target)] = grid[tuple(slices_grid)]
 
     return {
         "grid": target,
