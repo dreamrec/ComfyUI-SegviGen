@@ -78,3 +78,25 @@ def test_voxel_encode_output_shape(monkeypatch):
     assert "voxel" in slat
     assert slat["latent"] is dummy_latent
     assert slat["voxel"] is dummy_voxel
+
+
+def test_preprocess_registration():
+    from nodes.nodes_preprocess import SegviGenPreprocess
+    node = SegviGenPreprocess
+    assert node.CATEGORY == "SegviGen"
+    assert "IMAGE" in node.RETURN_TYPES
+    assert "MASK" in node.RETURN_TYPES
+    types_ = node.INPUT_TYPES()
+    assert "image" in types_["required"]
+    assert "background_color" in types_.get("optional", {})
+
+
+def test_conditioning_registration():
+    from nodes.nodes_conditioning import SegviGenGetConditioning
+    node = SegviGenGetConditioning
+    assert node.CATEGORY == "SegviGen"
+    assert "SEGVIGEN_COND" in node.RETURN_TYPES
+    types_ = node.INPUT_TYPES()["required"]
+    assert "model_config" in types_
+    assert "image" in types_
+    assert "mask" in types_
