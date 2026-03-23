@@ -4,7 +4,6 @@ SegviGen voxel pipeline nodes:
   - SegviGenVoxelEncode: SEGVIGEN_VOXEL → SEGVIGEN_SLAT
 """
 import logging
-import torch
 
 from .helpers import check_interrupt
 
@@ -92,9 +91,11 @@ class SegviGenVoxelEncode:
         patcher = get_encoder_patcher(model_config, models_dir)
         mm.load_models_gpu([patcher])
 
-        grid = voxel["grid"]
-        latent = encode_voxel_to_slat(patcher.model, grid, model_config)
-
-        mm.soft_empty_cache()
+        try:
+            # Pass the numpy grid (not the full dict) to the encoder
+            grid = voxel["grid"]
+            latent = encode_voxel_to_slat(patcher.model, grid, model_config)
+        finally:
+            mm.soft_empty_cache()
 
         return ({"latent": latent, "voxel": voxel},)
