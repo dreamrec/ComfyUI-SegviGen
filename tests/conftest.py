@@ -6,6 +6,12 @@ import pytest
 # Make package importable without ComfyUI present
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Add ComfyUI to sys.path so comfy modules can be imported
+# conftest is in tests/, go up to ComfyUI-SegviGen, then to custom_nodes, then to ComfyUI
+_COMFYUI_ROOT_FOR_IMPORTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if os.path.isdir(_COMFYUI_ROOT_FOR_IMPORTS) and os.path.exists(os.path.join(_COMFYUI_ROOT_FOR_IMPORTS, "comfy")):
+    sys.path.insert(0, _COMFYUI_ROOT_FOR_IMPORTS)
+
 # Mock folder_paths BEFORE importing the package.
 # Use unconditional assignment (not setdefault) so the mock always wins,
 # even in environments where a partial ComfyUI install might provide folder_paths.

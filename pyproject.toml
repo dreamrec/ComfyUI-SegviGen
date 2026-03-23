@@ -9,6 +9,12 @@ readme = "README.md"
 [project.urls]
 Repository = "https://github.com/your-repo/ComfyUI-SegviGen"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
 [tool.comfy]
 PublisherId = "local"
 DisplayName = "ComfyUI-SegviGen"

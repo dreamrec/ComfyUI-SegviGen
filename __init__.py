@@ -36,8 +36,13 @@ def _find_trellis2_nodes():
         log.info(f"SegviGen: added TRELLIS2 nodes path: {trellis2_nodes}")
 
 
-_find_trellis2_nodes()
-
-from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
-
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+try:
+    _find_trellis2_nodes()
+    from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+    __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+except (ImportError, RuntimeError) as e:
+    # During testing or when run outside ComfyUI context, allow partial initialization
+    log.debug(f"ComfyUI-SegviGen partial init: {e}")
+    NODE_CLASS_MAPPINGS = {}
+    NODE_DISPLAY_NAME_MAPPINGS = {}
+    __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
