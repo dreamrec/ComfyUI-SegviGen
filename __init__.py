@@ -36,11 +36,8 @@ def _find_trellis2_nodes():
         log.info(f"SegviGen: added TRELLIS2 nodes path: {trellis2_nodes}")
 
 
-try:
-    _find_trellis2_nodes()
-    from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
-except (ImportError, Exception):
-    NODE_CLASS_MAPPINGS = {}
-    NODE_DISPLAY_NAME_MAPPINGS = {}
+_find_trellis2_nodes()
+
+from nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
