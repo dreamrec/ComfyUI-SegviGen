@@ -175,21 +175,43 @@ class SegviGenFullSampler:
 
         torch.manual_seed(seed)
 
+        # ── Load normalization stats ──────────────────────────────────────
+        import json
+        import folder_paths as _fp
+        _pipeline_json = os.path.join(_fp.models_dir, "trellis2", "pipeline.json")
+        _shape_mean = _shape_std = None
+        if os.path.isfile(_pipeline_json):
+            with open(_pipeline_json) as _f:
+                _pcfg = json.load(_f).get("args", {})
+            _sn = _pcfg.get("shape_slat_normalization", {})
+            if _sn.get("mean") and _sn.get("std"):
+                _shape_mean = torch.tensor(_sn["mean"], device=device, dtype=torch.float32)
+                _shape_std  = torch.tensor(_sn["std"],  device=device, dtype=torch.float32)
+
         slat_latent = slat["latent"]
         coords = slat_latent.coords
         noise_ch = flow_model.out_channels
         cond_ch  = flow_model.in_channels - flow_model.out_channels
+
         noise = _sp.SparseTensor(
             feats=torch.randn(len(coords), noise_ch, device=device, dtype=torch.float32),
             coords=coords,
         )
-        # concat_cond is the shape conditioning: the encoded mesh latent from the VAE encoder.
-        # The flow model's input_layer expects 64 channels = 32 noise + 32 shape conditioning.
-        # Using zeros here removes all shape information and produces garbage output.
+
+        # Normalise shape_slat for concat_cond
+        raw_feats = slat_latent.feats.to(device=device, dtype=torch.float32)
+        if _shape_mean is not None and cond_ch > 0:
+            normed_feats = (raw_feats - _shape_mean) / _shape_std
+        else:
+            normed_feats = raw_feats
         concat_cond = _sp.SparseTensor(
-            feats=slat_latent.feats.to(device=device, dtype=torch.float32),
-            coords=coords,
+            feats=normed_feats, coords=coords
         ) if cond_ch > 0 else None
+
+        # tex_proxy: zeros at same coords (2N interleaving for FullSampler
+        # uses ComfyCompatFlowModel which doesn't implement 2N — pass None)
+        # The FullSampler wraps the bare SLatFlowModel (not Gen3DSegInteractive),
+        # so we keep the existing N-token path for it.
 
         pos_cond = conditioning.get("cond_1024", conditioning["cond_512"])
         neg_cond = conditioning["neg_cond"]
@@ -221,12 +243,10 @@ class SegviGenFullSampler:
         seg_latent = result.samples
 
         # ── decode labels from model output via K-means clustering ────────
-        # The flow model produces per-voxel 32-channel latent features that
-        # encode semantic part identity. Cluster them to find distinct parts.
         import numpy as np
         from sklearn.cluster import MiniBatchKMeans
 
-        vr = (slat.get("voxel") or {}).get("resolution", 64)
+        vr = (slat.get("voxel") or {}).get("resolution", 512)
         seg_feats = seg_latent.feats.cpu().float().numpy()
         seg_coords_np = seg_latent.coords[:, 1:].cpu().numpy().astype(np.int32)
 
@@ -236,13 +256,19 @@ class SegviGenFullSampler:
         km = MiniBatchKMeans(n_clusters=k, n_init=5, random_state=0)
         cluster_ids = km.fit_predict(seg_feats)
 
-        # Build [R,R,R] label grid (1-based: cluster 0 → label 1, etc.)
-        labels = np.zeros((vr, vr, vr), dtype=np.int32)
+        # Build [G,G,G] label grid (1-based: cluster 0 → label 1, etc.)
+        # Scale coords from vr (e.g. 512) down to 64-res to avoid OOM.
+        G = min(vr, 64)
+        scale = vr / G
+        labels = np.zeros((G, G, G), dtype=np.int32)
         for j, (x, y, z) in enumerate(seg_coords_np):
-            if 0 <= x < vr and 0 <= y < vr and 0 <= z < vr:
-                labels[x, y, z] = int(cluster_ids[j]) + 1
+            gx = min(int(x / scale), G - 1)
+            gy = min(int(y / scale), G - 1)
+            gz = min(int(z / scale), G - 1)
+            if gx >= 0 and gy >= 0 and gz >= 0:
+                labels[gx, gy, gz] = int(cluster_ids[j]) + 1
         log.info(f"SegviGen full: {k}-cluster K-means → "
-                 f"{len(np.unique(cluster_ids))} segments")
+                 f"{len(np.unique(cluster_ids))} segments (grid {G}³)")
 
         mm.soft_empty_cache()
         return ({"latent": seg_latent, "labels": labels, "voxel": slat.get("voxel"), "mesh": trimesh},)
@@ -349,9 +375,32 @@ class SegviGenInteractiveSampler:
 
         torch.manual_seed(seed)
 
+        # ── Load normalization stats ──────────────────────────────────────
+        import json
+        import folder_paths as _fp
+        _pipeline_json = os.path.join(_fp.models_dir, "trellis2", "pipeline.json")
+        _shape_mean = _shape_std = _tex_mean = _tex_std = None
+        if os.path.isfile(_pipeline_json):
+            with open(_pipeline_json) as _f:
+                _pcfg = json.load(_f).get("args", {})
+            _sn = _pcfg.get("shape_slat_normalization", {})
+            _tn = _pcfg.get("tex_slat_normalization", {})
+            if _sn.get("mean") and _sn.get("std"):
+                _shape_mean = torch.tensor(_sn["mean"], device=device, dtype=torch.float32)
+                _shape_std  = torch.tensor(_sn["std"],  device=device, dtype=torch.float32)
+            if _tn.get("mean") and _tn.get("std"):
+                _tex_mean = torch.tensor(_tn["mean"], device=device, dtype=torch.float32)
+                _tex_std  = torch.tensor(_tn["std"],  device=device, dtype=torch.float32)
+            log.info("SegviGen: loaded normalization stats from pipeline.json")
+        else:
+            log.warning(
+                "SegviGen: pipeline.json not found — running WITHOUT shape normalization. "
+                "Place TRELLIS2 models in models/trellis2/ for best results."
+            )
+
         # ── Prepare shared state ─────────────────────────────────────────
         slat_latent = slat["latent"]
-        voxel_resolution = (slat.get("voxel") or {}).get("resolution", 64)
+        voxel_resolution = (slat.get("voxel") or {}).get("resolution", 512)
         coords = slat_latent.coords
         coords_np = coords[:, 1:].cpu().numpy().astype(np.int32)
 
@@ -373,13 +422,39 @@ class SegviGenInteractiveSampler:
 
         sampler = FlowEulerGuidanceIntervalSampler(sigma_min=1e-5)
 
-        # Shape conditioning — same for all points: the encoded mesh latent from the VAE.
-        # concat_cond provides the structural information the flow model conditions on.
-        # Using zeros here removes all shape information and produces random garbage output.
+        # ── Normalise shape_slat for concat_cond ─────────────────────────
+        # The flow model was trained with normalised shape_slat as concat_cond
+        # (per pipeline.json shape_slat_normalization stats).
+        # Using zeros (the old default) removes all geometry information and
+        # causes random output. Using the raw (un-normalised) shape_slat also
+        # produces poor results; proper z-score normalisation is essential.
+        raw_shape_feats = slat_latent.feats.to(device=device, dtype=torch.float32)
+        if _shape_mean is not None and _shape_std is not None:
+            shape_normed_feats = (raw_shape_feats - _shape_mean) / _shape_std
+            log.info(
+                f"SegviGen: shape_slat normalised — "
+                f"norm_mean={shape_normed_feats.mean():.4f} "
+                f"norm_std={shape_normed_feats.std():.4f}"
+            )
+        else:
+            shape_normed_feats = raw_shape_feats  # fallback: use as-is
         shape_cond = _sp.SparseTensor(
-            feats=slat_latent.feats.to(device=device, dtype=torch.float32),
+            feats=shape_normed_feats,
             coords=coords,
         ) if cond_ch > 0 else None
+
+        # ── tex_proxy: zero-filled SparseTensor at same coords ────────────
+        # The upstream model expects a 2N interleaved sequence:
+        #   rows 0..N-1  = noise (what gets denoised)
+        #   rows N..2N-1 = tex_slat (original texture context)
+        # We don't have the tex encoder, so we use zeros as a proxy.
+        # This is better than the old N-token approach because:
+        #   (a) the transformer attention structure matches training, and
+        #   (b) non-zero shape_cond provides geometry conditioning for both halves.
+        tex_proxy = _sp.SparseTensor(
+            feats=torch.zeros(len(coords), noise_ch, device=device, dtype=torch.float32),
+            coords=coords,
+        )
 
         # ── Per-point inference loop (sequential mode) ───────────────────
         masks_and_scores = []
@@ -404,7 +479,10 @@ class SegviGenInteractiveSampler:
                 point, voxel_resolution, device=str(device)
             )
 
-            extra = {"concat_cond": shape_cond} if shape_cond is not None else {}
+            extra = {}
+            if shape_cond is not None:
+                extra["concat_cond"] = shape_cond
+            extra["tex_slats"] = tex_proxy
 
             result = sampler.sample(
                 gen, noise,
@@ -438,7 +516,13 @@ class SegviGenInteractiveSampler:
             log.info(f"SegviGen: point {i+1} → {fg_pct:.1f}% foreground")
 
         # ── Merge all binary masks into multi-label grid ─────────────────
-        labels = merge_masks(masks_and_scores, coords_np, voxel_resolution)
+        # grid_resolution=64 keeps the label array small (64³ = 256 KB)
+        # even when coords are in 512-res space (512³ would be 512 MB).
+        labels = merge_masks(
+            masks_and_scores, coords_np,
+            voxel_resolution=voxel_resolution,
+            grid_resolution=min(voxel_resolution, 64),
+        )
 
         mm.soft_empty_cache()
         return ({"latent": last_result.samples, "labels": labels,

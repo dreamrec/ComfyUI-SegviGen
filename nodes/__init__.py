@@ -1,5 +1,5 @@
 from .nodes_loadmesh import SegviGenLoadMesh
-from .nodes_voxel import SegviGenGLBtoVoxel, SegviGenVoxelEncode
+from .nodes_voxel import SegviGenGLBtoVoxel, SegviGenVoxelEncode, SegviGenFromShapeResult
 from .nodes_preprocess import SegviGenPreprocess
 from .nodes_conditioning import SegviGenGetConditioning, SegviGenNullConditioning
 from .nodes_sampler import SegviGenFullSampler, SegviGenInteractiveSampler
@@ -14,6 +14,7 @@ NODE_CLASS_MAPPINGS = {
     "SegviGenLoadMesh": SegviGenLoadMesh,
     "SegviGenGLBtoVoxel": SegviGenGLBtoVoxel,
     "SegviGenVoxelEncode": SegviGenVoxelEncode,
+    "SegviGenFromShapeResult": SegviGenFromShapeResult,
     "SegviGenPreprocess": SegviGenPreprocess,
     "SegviGenGetConditioning": SegviGenGetConditioning,
     "SegviGenNullConditioning": SegviGenNullConditioning,
@@ -28,7 +29,8 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SegviGenLoadMesh": "SegviGen: Load Mesh",
     "SegviGenGLBtoVoxel": "SegviGen: Voxelizer",
-    "SegviGenVoxelEncode": "SegviGen: Voxel Encode",
+    "SegviGenVoxelEncode": "SegviGen: Voxel Encode (legacy)",
+    "SegviGenFromShapeResult": "SegviGen: From TRELLIS2 Shape",
     "SegviGenPreprocess": "SegviGen: Image Preprocessing",
     "SegviGenGetConditioning": "SegviGen: Conditioner",
     "SegviGenNullConditioning": "SegviGen: Null Conditioning (no image)",

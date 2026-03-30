@@ -1,186 +1,210 @@
 {
   "id": "segvigen-interactive",
-  "revision": 8,
-  "last_node_id": 15,
-  "last_link_id": 21,
+  "revision": 10,
+  "last_node_id": 13,
+  "last_link_id": 19,
   "nodes": [
     {
       "id": 1,
-      "type": "SegviGenLoadMesh",
+      "type": "LoadTrellis2Models",
       "pos": [40, 40],
-      "size": [280, 68],
+      "size": [270, 106],
       "flags": {},
       "order": 0,
       "mode": 0,
       "outputs": [
-        {"name": "trimesh",    "type": "TRIMESH", "links": [1],  "slot_index": 0},
-        {"name": "model_file", "type": "STRING",  "links": [20], "slot_index": 1}
-      ],
-      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenLoadMesh"},
-      "widgets_values": [""]
-    },
-    {
-      "id": 14,
-      "type": "Preview3D",
-      "pos": [40, 170],
-      "size": [350, 350],
-      "flags": {},
-      "order": 1,
-      "mode": 0,
-      "inputs": [
-        {"name": "model_file",  "type": "STRING",         "link": 20},
-        {"name": "camera_info", "type": "LOAD_3D_CAMERA", "link": null, "shape": 7},
-        {"name": "bg_image",    "type": "IMAGE",          "link": null, "shape": 7}
-      ],
-      "outputs": [],
-      "properties": {"cnr_id": "comfy-core", "Node name for S&R": "Preview3D"},
-      "widgets_values": [""]
-    },
-    {
-      "id": 2,
-      "type": "LoadTrellis2Models",
-      "pos": [40, 580],
-      "size": [260, 106],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "outputs": [
-        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "links": [3, 4, 8], "slot_index": 0}
+        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "links": [1, 2, 3, 4], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-TRELLIS2", "Node name for S&R": "LoadTrellis2Models"},
       "widgets_values": ["512", "auto", "auto"]
     },
     {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [40, 200],
+      "size": [280, 100],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "outputs": [
+        {"name": "IMAGE", "type": "IMAGE", "links": [5], "slot_index": 0},
+        {"name": "MASK",  "type": "MASK",  "links": null, "slot_index": 1}
+      ],
+      "properties": {"cnr_id": "comfy-core", "Node name for S&R": "LoadImage"},
+      "widgets_values": ["example.png", "image"]
+    },
+    {
       "id": 3,
-      "type": "SegviGenGLBtoVoxel",
-      "pos": [420, 40],
-      "size": [300, 140],
+      "type": "SegviGenPreprocess",
+      "pos": [370, 200],
+      "size": [220, 60],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 5}
+      ],
+      "outputs": [
+        {"name": "image", "type": "IMAGE", "links": [6], "slot_index": 0},
+        {"name": "mask",  "type": "MASK",  "links": [7], "slot_index": 1}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenPreprocess"},
+      "widgets_values": ["black"]
+    },
+    {
+      "id": 4,
+      "type": "Trellis2GetConditioning",
+      "pos": [640, 200],
+      "size": [280, 106],
       "flags": {},
       "order": 3,
       "mode": 0,
       "inputs": [
-        {"name": "trimesh",          "type": "TRIMESH", "link": 1},
-        {"name": "mesh_path",        "type": "STRING",  "link": null, "shape": 7},
-        {"name": "glb_file",         "type": "STRING",  "link": null, "shape": 7, "widget": {"name": "glb_file"}},
-        {"name": "voxel_resolution", "type": "INT",     "link": null, "shape": 7, "widget": {"name": "voxel_resolution"}},
-        {"name": "simplify_faces",   "type": "INT",     "link": null, "shape": 7, "widget": {"name": "simplify_faces"}}
+        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 1},
+        {"name": "image",        "type": "IMAGE",                 "link": 6},
+        {"name": "mask",         "type": "MASK",                  "link": 7},
+        {"name": "background_color", "type": "COMBO", "widget": {"name": "background_color"}, "link": null}
       ],
       "outputs": [
-        {"name": "voxel",   "type": "SEGVIGEN_VOXEL", "links": [5],     "slot_index": 0},
-        {"name": "trimesh", "type": "TRIMESH",         "links": [6, 14], "slot_index": 1}
+        {"name": "conditioning",       "type": "TRELLIS2_CONDITIONING", "links": [8], "slot_index": 0},
+        {"name": "preprocessed_image", "type": "IMAGE",                 "links": null, "slot_index": 1}
       ],
-      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenGLBtoVoxel"},
-      "widgets_values": ["", 64, 100000]
+      "properties": {"cnr_id": "ComfyUI-TRELLIS2", "Node name for S&R": "Trellis2GetConditioning"},
+      "widgets_values": ["black"]
     },
     {
-      "id": 4,
-      "type": "SegviGenVoxelEncode",
-      "pos": [420, 240],
-      "size": [280, 60],
+      "id": 5,
+      "type": "Trellis2ImageToShape",
+      "pos": [970, 140],
+      "size": [320, 240],
       "flags": {},
       "order": 4,
       "mode": 0,
       "inputs": [
-        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 3},
-        {"name": "voxel",        "type": "SEGVIGEN_VOXEL",        "link": 5}
+        {"name": "model_config",           "type": "TRELLIS2_MODEL_CONFIG",   "link": 2},
+        {"name": "conditioning",           "type": "TRELLIS2_CONDITIONING",   "link": 8},
+        {"name": "seed",                   "type": "INT",   "shape": 7, "widget": {"name": "seed"},                   "link": null},
+        {"name": "ss_guidance_strength",   "type": "FLOAT", "shape": 7, "widget": {"name": "ss_guidance_strength"},   "link": null},
+        {"name": "ss_sampling_steps",      "type": "INT",   "shape": 7, "widget": {"name": "ss_sampling_steps"},      "link": null},
+        {"name": "shape_guidance_strength","type": "FLOAT", "shape": 7, "widget": {"name": "shape_guidance_strength"},"link": null},
+        {"name": "shape_sampling_steps",   "type": "INT",   "shape": 7, "widget": {"name": "shape_sampling_steps"},   "link": null},
+        {"name": "max_tokens",             "type": "INT",   "shape": 7, "widget": {"name": "max_tokens"},             "link": null}
       ],
       "outputs": [
-        {"name": "slat", "type": "SEGVIGEN_SLAT", "links": [7, 10], "slot_index": 0}
+        {"name": "shape_result", "type": "TRELLIS2_SHAPE_RESULT", "links": [9],      "slot_index": 0},
+        {"name": "mesh",         "type": "TRIMESH",               "links": [10, 11], "slot_index": 1}
       ],
-      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenVoxelEncode"}
+      "properties": {"cnr_id": "ComfyUI-TRELLIS2", "Node name for S&R": "Trellis2ImageToShape"},
+      "widgets_values": [0, "fixed", 7.5, 12, 7.5, 12, 49152]
     },
     {
-      "id": 5,
-      "type": "SegviGenNullConditioning",
-      "pos": [420, 360],
-      "size": [280, 60],
+      "id": 6,
+      "type": "SegviGenFromShapeResult",
+      "pos": [1350, 140],
+      "size": [300, 60],
       "flags": {},
       "order": 5,
       "mode": 0,
       "inputs": [
-        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 4}
+        {"name": "shape_result", "type": "TRELLIS2_SHAPE_RESULT", "link": 9}
       ],
       "outputs": [
-        {"name": "conditioning", "type": "SEGVIGEN_COND", "links": [11], "slot_index": 0}
+        {"name": "slat", "type": "SEGVIGEN_SLAT", "links": [12, 13], "slot_index": 0}
       ],
-      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenNullConditioning"}
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenFromShapeResult"}
     },
     {
-      "id": 6,
-      "type": "SegviGenMeshPicker",
-      "pos": [780, 40],
-      "size": [320, 180],
+      "id": 7,
+      "type": "SegviGenNullConditioning",
+      "pos": [1350, 260],
+      "size": [280, 60],
       "flags": {},
       "order": 6,
       "mode": 0,
       "inputs": [
-        {"name": "slat",    "type": "SEGVIGEN_SLAT", "link": 7},
-        {"name": "trimesh", "type": "TRIMESH",       "link": 6}
+        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 3}
       ],
       "outputs": [
-        {"name": "points", "type": "SEGVIGEN_POINTS", "links": [12], "slot_index": 0}
+        {"name": "conditioning", "type": "SEGVIGEN_COND", "links": [14], "slot_index": 0}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenNullConditioning"}
+    },
+    {
+      "id": 8,
+      "type": "SegviGenMeshPicker",
+      "pos": [1690, 140],
+      "size": [320, 180],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {"name": "slat",    "type": "SEGVIGEN_SLAT", "link": 12},
+        {"name": "trimesh", "type": "TRIMESH",       "link": 10}
+      ],
+      "outputs": [
+        {"name": "points", "type": "SEGVIGEN_POINTS", "links": [15], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenMeshPicker"},
       "widgets_values": ["[]", ""]
     },
     {
-      "id": 7,
+      "id": 9,
       "type": "SegviGenInteractiveSampler",
-      "pos": [1160, 40],
+      "pos": [2070, 140],
       "size": [320, 260],
       "flags": {},
-      "order": 7,
+      "order": 8,
       "mode": 0,
       "inputs": [
-        {"name": "model_config",           "type": "TRELLIS2_MODEL_CONFIG", "link": 8},
-        {"name": "slat",                   "type": "SEGVIGEN_SLAT",         "link": 10},
-        {"name": "conditioning",           "type": "SEGVIGEN_COND",         "link": 11},
-        {"name": "points",                 "type": "SEGVIGEN_POINTS",       "link": 12},
-        {"name": "trimesh",                "type": "TRIMESH",               "link": 14},
-        {"name": "seed",                   "type": "INT",   "shape": 7, "widget": {"name": "seed"},                   "link": null},
-        {"name": "steps",                  "type": "INT",   "shape": 7, "widget": {"name": "steps"},                  "link": null},
-        {"name": "guidance_strength",      "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_strength"},      "link": null},
-        {"name": "guidance_rescale",       "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_rescale"},       "link": null},
-        {"name": "guidance_interval_start","type": "FLOAT", "shape": 7, "widget": {"name": "guidance_interval_start"},"link": null},
-        {"name": "guidance_interval_end",  "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_interval_end"},  "link": null}
+        {"name": "model_config",            "type": "TRELLIS2_MODEL_CONFIG", "link": 4},
+        {"name": "slat",                    "type": "SEGVIGEN_SLAT",         "link": 13},
+        {"name": "conditioning",            "type": "SEGVIGEN_COND",         "link": 14},
+        {"name": "points",                  "type": "SEGVIGEN_POINTS",       "link": 15},
+        {"name": "trimesh",                 "type": "TRIMESH",               "link": 11, "shape": 7},
+        {"name": "seed",                    "type": "INT",   "shape": 7, "widget": {"name": "seed"},                    "link": null},
+        {"name": "steps",                   "type": "INT",   "shape": 7, "widget": {"name": "steps"},                   "link": null},
+        {"name": "guidance_strength",       "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_strength"},       "link": null},
+        {"name": "guidance_rescale",        "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_rescale"},        "link": null},
+        {"name": "guidance_interval_start", "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_interval_start"}, "link": null},
+        {"name": "guidance_interval_end",   "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_interval_end"},   "link": null}
       ],
       "outputs": [
-        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "links": [15, 16], "slot_index": 0}
+        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "links": [16, 17], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenInteractiveSampler"},
       "widgets_values": [0, "fixed", 12, 7.5, 0.0, 0.6, 0.9]
     },
     {
-      "id": 13,
+      "id": 10,
       "type": "SegviGenExportParts",
-      "pos": [1540, 40],
+      "pos": [2450, 140],
       "size": [320, 150],
       "flags": {},
-      "order": 8,
+      "order": 9,
       "mode": 0,
       "inputs": [
-        {"name": "seg_result",        "type": "SEGVIGEN_SEG_RESULT", "link": 15},
-        {"name": "max_faces",         "type": "INT",   "shape": 7, "widget": {"name": "max_faces"},         "link": null},
-        {"name": "min_segment_faces", "type": "INT",   "shape": 7, "widget": {"name": "min_segment_faces"}, "link": null},
-        {"name": "filename_prefix",   "type": "STRING","shape": 7, "widget": {"name": "filename_prefix"},   "link": null}
+        {"name": "seg_result",        "type": "SEGVIGEN_SEG_RESULT", "link": 16},
+        {"name": "max_faces",         "type": "INT",    "shape": 7, "widget": {"name": "max_faces"},         "link": null},
+        {"name": "min_segment_faces", "type": "INT",    "shape": 7, "widget": {"name": "min_segment_faces"}, "link": null},
+        {"name": "filename_prefix",   "type": "STRING", "shape": 7, "widget": {"name": "filename_prefix"},   "link": null}
       ],
       "outputs": [
-        {"name": "combined_file",    "type": "STRING", "links": [21], "slot_index": 0},
-        {"name": "individual_parts", "type": "STRING", "links": null, "slot_index": 1}
+        {"name": "combined_file",    "type": "STRING", "links": [18], "slot_index": 0},
+        {"name": "individual_parts", "type": "STRING", "links": null,  "slot_index": 1}
       ],
       "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenExportParts"},
       "widgets_values": [100000, 50, "segvigen"]
     },
     {
-      "id": 15,
+      "id": 11,
       "type": "Preview3D",
-      "pos": [1540, 240],
+      "pos": [2830, 140],
       "size": [420, 380],
       "flags": {},
-      "order": 9,
+      "order": 10,
       "mode": 0,
       "inputs": [
-        {"name": "model_file",  "type": "STRING",         "link": 21},
+        {"name": "model_file",  "type": "STRING",         "link": 18},
         {"name": "camera_info", "type": "LOAD_3D_CAMERA", "link": null, "shape": 7},
         {"name": "bg_image",    "type": "IMAGE",          "link": null, "shape": 7}
       ],
@@ -189,17 +213,17 @@
       "widgets_values": [""]
     },
     {
-      "id": 8,
+      "id": 12,
       "type": "SegviGenRenderPreview",
-      "pos": [1540, 670],
+      "pos": [2450, 360],
       "size": [260, 110],
       "flags": {},
-      "order": 10,
+      "order": 11,
       "mode": 0,
       "inputs": [
-        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "link": 16},
-        {"name": "num_views",  "type": "INT", "shape": 7, "widget": {"name": "num_views"},  "link": null},
-        {"name": "resolution", "type": "INT", "shape": 7, "widget": {"name": "resolution"}, "link": null}
+        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "link": 17},
+        {"name": "num_views",  "type": "INT",   "shape": 7, "widget": {"name": "num_views"},  "link": null},
+        {"name": "resolution", "type": "INT",   "shape": 7, "widget": {"name": "resolution"}, "link": null}
       ],
       "outputs": [
         {"name": "preview_images", "type": "IMAGE", "links": [19], "slot_index": 0}
@@ -208,12 +232,12 @@
       "widgets_values": [8, 512]
     },
     {
-      "id": 9,
+      "id": 13,
       "type": "PreviewImage",
-      "pos": [1850, 670],
+      "pos": [2760, 360],
       "size": [260, 260],
       "flags": {},
-      "order": 11,
+      "order": 12,
       "mode": 0,
       "inputs": [
         {"name": "images", "type": "IMAGE", "link": 19}
@@ -223,25 +247,67 @@
     }
   ],
   "links": [
-    [1,  1, 0,  3, 0, "TRIMESH"],
-    [3,  2, 0,  4, 0, "TRELLIS2_MODEL_CONFIG"],
-    [4,  2, 0,  5, 0, "TRELLIS2_MODEL_CONFIG"],
-    [5,  3, 0,  4, 1, "SEGVIGEN_VOXEL"],
-    [6,  3, 1,  6, 1, "TRIMESH"],
-    [7,  4, 0,  6, 0, "SEGVIGEN_SLAT"],
-    [8,  2, 0,  7, 0, "TRELLIS2_MODEL_CONFIG"],
-    [10, 4, 0,  7, 1, "SEGVIGEN_SLAT"],
-    [11, 5, 0,  7, 2, "SEGVIGEN_COND"],
-    [12, 6, 0,  7, 3, "SEGVIGEN_POINTS"],
-    [14, 3, 1,  7, 4, "TRIMESH"],
-    [15, 7, 0, 13, 0, "SEGVIGEN_SEG_RESULT"],
-    [16, 7, 0,  8, 0, "SEGVIGEN_SEG_RESULT"],
-    [19, 8, 0,  9, 0, "IMAGE"],
-    [20, 1, 1, 14, 0, "STRING"],
-    [21, 13, 0, 15, 0, "STRING"]
+    [1,  1, 0,  4, 0, "TRELLIS2_MODEL_CONFIG"],
+    [2,  1, 0,  5, 0, "TRELLIS2_MODEL_CONFIG"],
+    [3,  1, 0,  7, 0, "TRELLIS2_MODEL_CONFIG"],
+    [4,  1, 0,  9, 0, "TRELLIS2_MODEL_CONFIG"],
+    [5,  2, 0,  3, 0, "IMAGE"],
+    [6,  3, 0,  4, 1, "IMAGE"],
+    [7,  3, 1,  4, 2, "MASK"],
+    [8,  4, 0,  5, 1, "TRELLIS2_CONDITIONING"],
+    [9,  5, 0,  6, 0, "TRELLIS2_SHAPE_RESULT"],
+    [10, 5, 1,  8, 1, "TRIMESH"],
+    [11, 5, 1,  9, 4, "TRIMESH"],
+    [12, 6, 0,  8, 0, "SEGVIGEN_SLAT"],
+    [13, 6, 0,  9, 1, "SEGVIGEN_SLAT"],
+    [14, 7, 0,  9, 2, "SEGVIGEN_COND"],
+    [15, 8, 0,  9, 3, "SEGVIGEN_POINTS"],
+    [16, 9, 0, 10, 0, "SEGVIGEN_SEG_RESULT"],
+    [17, 9, 0, 12, 0, "SEGVIGEN_SEG_RESULT"],
+    [18, 10, 0, 11, 0, "STRING"],
+    [19, 12, 0, 13, 0, "IMAGE"]
   ],
-  "groups": [],
+  "groups": [
+    {
+      "title": "1. Load Image + Background Removal",
+      "bounding": [20, 170, 600, 130],
+      "color": "#3f789e",
+      "font_size": 14
+    },
+    {
+      "title": "2. TRELLIS2: Image → Conditioning → 3D Shape",
+      "bounding": [620, 110, 700, 280],
+      "color": "#3d6b44",
+      "font_size": 14
+    },
+    {
+      "title": "3. SegviGen: Encode Shape + Pick Points",
+      "bounding": [1330, 110, 700, 250],
+      "color": "#5e4a7e",
+      "font_size": 14
+    },
+    {
+      "title": "4. Interactive Sampling + Export",
+      "bounding": [2050, 110, 760, 320],
+      "color": "#7e4a4a",
+      "font_size": 14
+    }
+  ],
   "config": {},
-  "extra": {"ds": {"scale": 0.45, "offset": [0, 0]}},
+  "extra": {
+    "ds": {"scale": 0.40, "offset": [0, 0]},
+    "_note": [
+      "SegviGen Interactive Segmentation Workflow (v10)",
+      "",
+      "Flow:",
+      "1. Load an image of your object → BiRefNet removes background",
+      "2. Trellis2GetConditioning extracts DINOv3 features",
+      "3. Trellis2ImageToShape generates 3D shape + shape_slat at 512-res",
+      "4. SegviGenFromShapeResult extracts the real-feature shape_slat",
+      "5. SegviGenMeshPicker: click on the 3D mesh to mark segment points",
+      "6. SegviGenInteractiveSampler runs point-guided segmentation",
+      "7. Export segmented parts + render preview"
+    ]
+  },
   "version": 0.4
 }

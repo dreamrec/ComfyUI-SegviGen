@@ -1,7 +1,8 @@
 """
 SegviGen voxel pipeline nodes:
   - SegviGenGLBtoVoxel: mesh → SEGVIGEN_VOXEL
-  - SegviGenVoxelEncode: SEGVIGEN_VOXEL → SEGVIGEN_SLAT
+  - SegviGenVoxelEncode: SEGVIGEN_VOXEL → SEGVIGEN_SLAT (legacy, zero features)
+  - SegviGenFromShapeResult: TRELLIS2_SHAPE_RESULT → SEGVIGEN_SLAT (correct path)
 """
 import logging
 
@@ -215,3 +216,94 @@ class SegviGenVoxelEncode:
         log.info(f"SegviGen: encoded {len(coords)} voxels → SLAT ({in_channels}ch, R={grid.shape[0]})")
         mm.soft_empty_cache()
         return ({"latent": latent, "voxel": voxel_with_res},)
+
+
+class SegviGenFromShapeResult:
+    """
+    Convert a TRELLIS2_SHAPE_RESULT directly into a SEGVIGEN_SLAT.
+
+    This is the CORRECT input path for SegviGen. Instead of creating a zero-
+    feature SparseTensor from a binary voxel grid (SegviGenVoxelEncode), this
+    node extracts the shape_slat that TRELLIS2 already computed during shape
+    generation.
+
+    Why this matters:
+    - shape_slat carries real geometry features (not zeros).
+    - shape_slat is at 512-resolution, matching the model's APE coordinate space.
+    - concat_cond in the sampler uses these features → proper shape conditioning.
+
+    Connect: TRELLIS2 "Image to Shape" → shape_result → this node → slat
+    """
+
+    CATEGORY = "SegviGen"
+    FUNCTION = "encode"
+    RETURN_TYPES = ("SEGVIGEN_SLAT",)
+    RETURN_NAMES = ("slat",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "shape_result": ("TRELLIS2_SHAPE_RESULT", {
+                    "tooltip": "Connect the shape_result output from TRELLIS2 Image-to-Shape node.",
+                }),
+            },
+        }
+
+    def encode(self, shape_result: dict):
+        import sys
+        import os
+        import torch
+        import comfy.model_management as mm
+
+        check_interrupt()
+
+        # Resolve SparseTensor class from TRELLIS2
+        for p in sys.path:
+            candidate = os.path.join(p, "trellis2", "sparse", "__init__.py")
+            if os.path.isfile(candidate):
+                break
+        else:
+            trellis2_nodes = os.path.normpath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "ComfyUI-TRELLIS2", "nodes")
+            )
+            if trellis2_nodes not in sys.path:
+                sys.path.insert(0, trellis2_nodes)
+        from trellis2.modules.sparse import SparseTensor
+
+        device = mm.get_torch_device()
+
+        slat_data = shape_result.get("shape_slat")
+        if slat_data is None:
+            raise ValueError(
+                "SegviGenFromShapeResult: shape_result has no 'shape_slat'. "
+                "Connect to the shape_result output of the TRELLIS2 Image-to-Shape node."
+            )
+
+        # shape_result['shape_slat'] is either an IPC-serialised dict or a live SparseTensor
+        if isinstance(slat_data, dict) and slat_data.get("_type") == "SparseTensor":
+            feats = slat_data["feats"].to(device=device, dtype=torch.float32)
+            coords = slat_data["coords"].to(device=device)
+            shape_slat = SparseTensor(feats=feats, coords=coords)
+        elif hasattr(slat_data, "feats") and hasattr(slat_data, "coords"):
+            # Already a live SparseTensor
+            shape_slat = SparseTensor(
+                feats=slat_data.feats.to(device=device, dtype=torch.float32),
+                coords=slat_data.coords.to(device=device),
+            )
+        else:
+            raise ValueError(
+                f"SegviGenFromShapeResult: unknown shape_slat format: {type(slat_data)}"
+            )
+
+        N = shape_slat.feats.shape[0]
+        # TRELLIS2 shape_slat is always 512-res; fall back to shape_result metadata
+        resolution = shape_result.get("resolution", 512)
+
+        log.info(
+            f"SegviGenFromShapeResult: {N} voxels, "
+            f"resolution={resolution}, "
+            f"feature_norm={shape_slat.feats.norm(dim=-1).mean():.4f}"
+        )
+        mm.soft_empty_cache()
+        return ({"latent": shape_slat, "voxel": {"resolution": resolution}},)

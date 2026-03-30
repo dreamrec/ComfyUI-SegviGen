@@ -81,10 +81,14 @@ class Gen3DSegInteractive(nn.Module):
 
     def forward(self, x, t, cond, input_points=None, **kwargs):
         """
-        Forward pass with point-token interleaving.
+        Forward pass with 2N token interleaving and point-token injection.
 
-        Replicates SLatFlowModel.forward() exactly, but appends 10 point
-        tokens after input_layer projection and strips them before out_layer.
+        Implements the upstream Gen3DSeg.forward() + flow_forward() structure:
+          1. Build 2N tokens: [noise_0..N | tex_proxy_0..N] (block order)
+          2. Concatenate with 2N concat_cond (duplicated shape_slat) → 2N × 64
+          3. Project, add APE, inject 10 point tokens, run transformer
+          4. Strip point tokens, extract first N rows (noise positions only)
+          5. Output projection → [N, 32]
 
         Args:
             x: noisy sparse latent (SparseTensor, [N, 32])
@@ -92,91 +96,110 @@ class Gen3DSegInteractive(nn.Module):
             cond: conditioning (tensor or list of tensors)
             input_points: dict with 'coords' [10,4] and 'labels' [10,1],
                           or None for unconditional forward
-            **kwargs: must contain 'concat_cond' (SparseTensor or None)
+            **kwargs:
+              concat_cond: normalized shape_slat SparseTensor [N, 32]
+              tex_slats:   tex proxy SparseTensor [N, 32] — use zeros when
+                           real tex_slat is unavailable (no tex encoder)
         """
         import torch.nn.functional as F
         from trellis2.modules import sparse as sp
 
-        # Import manual_cast from the same module as SLatFlowModel
         try:
             from trellis2.models.structured_latent_flow import manual_cast
         except ImportError:
-            # Fallback: identity cast
             def manual_cast(x, dtype):
-                if hasattr(x, 'replace'):
+                if hasattr(x, "replace"):
                     return x.replace(x.feats.to(dtype))
                 return x.to(dtype) if isinstance(x, torch.Tensor) else x
 
-        concat_cond = kwargs.get("concat_cond")
-        fm = self.flow_model  # shorthand
+        concat_cond = kwargs.get("concat_cond")  # normalized shape_slat [N, 32]
+        tex_slats   = kwargs.get("tex_slats")    # tex proxy [N, 32], or None
+        fm = self.flow_model
+        N = x.feats.shape[0]
 
-        # ── 1. Feature concat (noise + shape condition) ──────────────────
-        if concat_cond is not None:
-            x = sp.sparse_cat([x, concat_cond], dim=-1)
+        # ── 1. Build 2N token sequence ────────────────────────────────────
+        # Upstream order: rows 0..N-1 = noise, rows N..2N-1 = tex_slat
+        if tex_slats is not None:
+            x_in = sp.SparseTensor(
+                feats=torch.cat([x.feats, tex_slats.feats], dim=0),    # [2N, 32]
+                coords=torch.cat([x.coords, tex_slats.coords], dim=0), # [2N, 4]
+            )
+            if concat_cond is not None:
+                cc_in = sp.SparseTensor(
+                    feats=torch.cat(
+                        [concat_cond.feats, concat_cond.feats], dim=0
+                    ),  # [2N, 32]
+                    coords=torch.cat(
+                        [concat_cond.coords, concat_cond.coords], dim=0
+                    ),  # [2N, 4]
+                )
+            else:
+                cc_in = None
+        else:
+            # Legacy path: N-token sequence (tex interleaving disabled)
+            x_in = x
+            cc_in = concat_cond
+
+        n_tokens = x_in.feats.shape[0]  # 2N or N
+
+        # ── 2. Feature concat: each token [32] + shape [32] → [64] ───────
+        if cc_in is not None:
+            x_in = sp.sparse_cat([x_in, cc_in], dim=-1)
         if isinstance(cond, list):
             cond = sp.VarLenTensor.from_tensor_list(cond)
 
-        # Defensively ensure x is float32 before input_layer.
-        # input_layer and out_layer stay float32 per SLatFlowModel's
-        # mixed-precision design (convert_to only touches blocks).
-        # The sampler should pass float32 noise, but we cast here to be
-        # robust in case upstream code changes.
-        if x.feats.dtype != torch.float32:
-            x = x.type(torch.float32)
+        if x_in.feats.dtype != torch.float32:
+            x_in = x_in.type(torch.float32)
 
-        # ── 2. Input projection: [N, 64] → [N, 1536] ────────────────────
-        # input_layer stays float32 — only fm.blocks are converted to bf16/fp16
-        # by SLatFlowModel.convert_to().  manual_cast AFTER promotes the output
-        # to fm.dtype (bf16/fp16) for the transformer blocks.
-        h = fm.input_layer(x)
+        # ── 3. Input projection: [2N, 64] → [2N, 1536] ───────────────────
+        h = fm.input_layer(x_in)
         h = manual_cast(h, fm.dtype)
 
-        # ── 3. Timestep embedding ────────────────────────────────────────
-        # t stays float32 — t_embedder.mlp is kept in float32 at load time
-        # (mirrors SLatFlowModel.convert_to which only converts blocks to bf16)
+        # ── 4. Timestep embedding ─────────────────────────────────────────
         t_emb = fm.t_embedder(t)
         if fm.share_mod:
             t_emb = fm.adaLN_modulation(t_emb)
         t_emb = manual_cast(t_emb, fm.dtype)
-        cond = manual_cast(cond, fm.dtype)
+        cond  = manual_cast(cond, fm.dtype)
 
-        # ── 4. Absolute position embedding ───────────────────────────────
+        # ── 5. Absolute position embedding (APE) ─────────────────────────
         if fm.pe_mode == "ape":
             pe = fm.pos_embedder(h.coords[:, 1:])
-            h = h + manual_cast(pe, fm.dtype)
+            h  = h + manual_cast(pe, fm.dtype)
 
-        # ── 5. Append point tokens ───────────────────────────────────────
-        n_voxels = len(h.feats)
+        # ── 6. Append 10 point tokens after all 2N voxel tokens ──────────
         if input_points is not None:
             point_st = self._build_point_tokens(input_points, h)
-
-            # Apply position embedding to point tokens too
             if fm.pe_mode == "ape":
-                pt_pe = fm.pos_embedder(point_st.coords[:, 1:])
+                pt_pe    = fm.pos_embedder(point_st.coords[:, 1:])
                 point_st = point_st.replace(
                     point_st.feats + manual_cast(pt_pe, fm.dtype)
                 )
-
-            # Append: cat feats and coords along token dim
-            combined_feats = torch.cat([h.feats, point_st.feats], dim=0)
+            combined_feats  = torch.cat([h.feats, point_st.feats],  dim=0)
             combined_coords = torch.cat([h.coords, point_st.coords], dim=0)
             h = sp.SparseTensor(feats=combined_feats, coords=combined_coords)
 
-        # ── 6. Transformer blocks (30 blocks of self-attn + cross-attn) ──
+        # ── 7. Transformer blocks ─────────────────────────────────────────
         for block in fm.blocks:
             h = block(h, t_emb, cond)
 
-        # ── 7. Strip point tokens (keep first n_voxels) ─────────────────
+        # ── 8. Strip point tokens (restore 2N voxel tokens) ──────────────
         if input_points is not None:
             h = sp.SparseTensor(
-                feats=h.feats[:n_voxels],
-                coords=h.coords[:n_voxels],
+                feats=h.feats[:n_tokens],
+                coords=h.coords[:n_tokens],
             )
 
-        # ── 8. Output projection ─────────────────────────────────────────
-        # out_layer stays float32 (SLatFlowModel.convert_to only touches blocks).
-        # Cast back to float32 before out_layer — mirrors SLatFlowModel.forward()
-        # where x.dtype is always float32 in normal usage.
+        # ── 9. Extract noise positions: first N of 2N ─────────────────────
+        # Rows N..2N-1 (tex positions) are discarded — we only need the
+        # noise-position predictions for the Euler denoising step.
+        if tex_slats is not None:
+            h = sp.SparseTensor(
+                feats=h.feats[:N],
+                coords=h.coords[:N],
+            )
+
+        # ── 10. Output projection ─────────────────────────────────────────
         h = manual_cast(h, torch.float32)
         h = h.replace(F.layer_norm(h.feats, h.feats.shape[-1:]))
         h = fm.out_layer(h)
@@ -364,46 +387,57 @@ def _extract_mask_spatial(feats_np, coords_np, click_voxel, n_clusters=8):
 
 # ─── Multi-mask merger ───────────────────────────────────────────────────────
 
-def merge_masks(masks_and_scores, coords_np, voxel_resolution):
+def merge_masks(masks_and_scores, coords_np, voxel_resolution, grid_resolution=64):
     """
-    Merge N binary masks into a single multi-label [R,R,R] grid.
+    Merge N binary masks into a single multi-label [G,G,G] grid.
 
     Each voxel is assigned to the mask with highest confidence score.
     Unassigned occupied voxels get label N+1 ("the rest").
 
     Args:
         masks_and_scores: list of (mask_bool[N], scores_float[N]) tuples
-        coords_np: [N, 3] int32 — voxel grid coordinates
-        voxel_resolution: int
+        coords_np: [N, 3] int32 — voxel grid coordinates (in voxel_resolution space)
+        voxel_resolution: int — coordinate space of coords_np (e.g. 512)
+        grid_resolution: int — output label grid side length (default 64).
+            coords are scaled from voxel_resolution → grid_resolution.
+            Kept small (64) to avoid 512³ = 512 MB memory allocation.
 
     Returns:
-        [R, R, R] int32 label grid (1-based labels, 0=empty)
+        [G, G, G] int32 label grid (1-based labels, 0=empty)
     """
-    R = voxel_resolution
-    labels = np.zeros((R, R, R), dtype=np.int32)
-    confidence = np.full((R, R, R), -np.inf, dtype=np.float32)
+    G = grid_resolution
+    # Scale factor: map coords from voxel_resolution space to grid_resolution space
+    scale = voxel_resolution / G
+
+    labels     = np.zeros((G, G, G), dtype=np.int32)
+    confidence = np.full((G, G, G), -np.inf, dtype=np.float32)
     N = len(coords_np)
+
+    # Vectorized scaling of coordinates
+    scaled_coords = np.floor(coords_np.astype(np.float32) / scale).astype(np.int32)
+    scaled_coords = np.clip(scaled_coords, 0, G - 1)
 
     # Assign each voxel to the mask with highest confidence
     for label_idx, (mask, scores) in enumerate(masks_and_scores, start=1):
-        for j in range(N):
-            if mask[j]:
-                x, y, z = int(coords_np[j, 0]), int(coords_np[j, 1]), int(coords_np[j, 2])
-                if 0 <= x < R and 0 <= y < R and 0 <= z < R:
-                    if scores[j] > confidence[x, y, z]:
-                        labels[x, y, z] = label_idx
-                        confidence[x, y, z] = scores[j]
+        active = np.where(mask)[0]
+        for j in active:
+            x, y, z = scaled_coords[j, 0], scaled_coords[j, 1], scaled_coords[j, 2]
+            if scores[j] > confidence[x, y, z]:
+                labels[x, y, z] = label_idx
+                confidence[x, y, z] = scores[j]
 
     # Unassigned occupied voxels → label N+1 ("the rest")
     next_label = len(masks_and_scores) + 1
     for j in range(N):
-        x, y, z = int(coords_np[j, 0]), int(coords_np[j, 1]), int(coords_np[j, 2])
-        if 0 <= x < R and 0 <= y < R and 0 <= z < R:
-            if labels[x, y, z] == 0:
-                labels[x, y, z] = next_label
+        x, y, z = scaled_coords[j, 0], scaled_coords[j, 1], scaled_coords[j, 2]
+        if labels[x, y, z] == 0:
+            labels[x, y, z] = next_label
 
     unique = np.unique(labels[labels > 0])
-    log.info(f"SegviGen: merged {len(masks_and_scores)} masks → {len(unique)} labels")
+    log.info(
+        f"SegviGen: merged {len(masks_and_scores)} masks → {len(unique)} labels "
+        f"(grid {G}³, coord_scale={scale:.2f})"
+    )
     return labels
 
 
