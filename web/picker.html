@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SegviGen 3D Point Picker</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #141420;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ── top bar ─────────────────────────────────────────── */
+    #header {
+      background: #1a1a2e;
+      padding: 7px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #2a2a50;
+      flex-shrink: 0;
+    }
+    #header h1 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #e94560;
+      white-space: nowrap;
+    }
+    #header .hint {
+      font-size: 11px;
+      color: #666;
+      flex: 1;
+    }
+
+    /* ── main split ───────────────────────────────────────── */
+    #main-area {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── 3D canvas ────────────────────────────────────────── */
+    #canvas-wrap {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+    }
+    #canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+    #loading {
+      position: absolute;
+      inset: 0;
+      background: rgba(20, 20, 32, 0.88);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      font-size: 13px;
+      color: #888;
+      pointer-events: none;
+    }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #333;
+      border-top-color: #e94560;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .spinner-sm {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border: 2px solid #444;
+      border-top-color: #22c55e;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── sidebar ──────────────────────────────────────────── */
+    #sidebar {
+      width: 210px;
+      min-width: 210px;
+      background: #1a1a2e;
+      border-left: 1px solid #2a2a50;
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+      gap: 8px;
+      overflow: hidden;
+    }
+
+    .label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #555;
+      font-weight: 600;
+    }
+
+    /* ── points list ────────────────────────────────────────── */
+    #points-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    #points-list::-webkit-scrollbar { width: 4px; }
+    #points-list::-webkit-scrollbar-track { background: transparent; }
+    #points-list::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+
+    .empty-hint {
+      color: #444;
+      font-size: 11px;
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+
+    .point-item {
+      background: #12122a;
+      border: 1px solid #2a2a50;
+      border-radius: 5px;
+      padding: 5px 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+    }
+    .point-num {
+      color: #e94560;
+      font-weight: 700;
+      font-size: 10px;
+      min-width: 20px;
+    }
+    .point-coords {
+      color: #9ab8d0;
+      flex: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .rm-btn {
+      cursor: pointer;
+      color: #555;
+      background: none;
+      border: none;
+      font-size: 15px;
+      line-height: 1;
+      padding: 0 2px;
+      transition: color 0.15s;
+    }
+    .rm-btn:hover { color: #e94560; }
+
+    /* ── preview status pill ────────────────────────────────── */
+    #preview-status {
+      font-size: 10px;
+      color: #555;
+      text-align: center;
+      padding: 4px 6px;
+      background: #0e0e1e;
+      border: 1px solid #1e2040;
+      border-radius: 4px;
+      min-height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.3;
+      flex-shrink: 0;
+    }
+    #preview-status.active { color: #22c55e; border-color: #1a4a2a; background: #0a1a10; }
+    #preview-status.loading { color: #8ab8d0; border-color: #1a304a; background: #0a1020; }
+    #preview-status.error { color: #c05030; border-color: #3a1a10; background: #1a0a08; }
+
+    /* ── bottom controls ─────────────────────────────────── */
+    #controls {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    #status {
+      font-size: 10px;
+      color: #666;
+      text-align: center;
+      padding: 5px 6px;
+      background: #12122a;
+      border-radius: 4px;
+      min-height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.3;
+    }
+
+    button.action {
+      padding: 8px;
+      border-radius: 5px;
+      border: none;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: opacity 0.12s, transform 0.08s;
+      letter-spacing: 0.02em;
+    }
+    button.action:hover { opacity: 0.88; }
+    button.action:active { transform: scale(0.97); }
+
+    #btn-confirm {
+      background: #e94560;
+      color: #fff;
+    }
+    #btn-confirm:disabled {
+      background: #3a2a30;
+      color: #666;
+      cursor: default;
+    }
+    #btn-clear {
+      background: #252540;
+      color: #aaa;
+    }
+
+    #count-badge {
+      display: inline-block;
+      background: #252540;
+      color: #9ab8d0;
+      border-radius: 3px;
+      padding: 0 5px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-left: 4px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="header">
+  <h1>SegviGen 3D Picker</h1>
+  <span class="hint">
+    Left-drag: rotate &nbsp;·&nbsp; Right-drag: pan &nbsp;·&nbsp;
+    Scroll: zoom &nbsp;·&nbsp; <strong style="color:#a8d5e2">Click surface: add point &amp; preview</strong>
+  </span>
+</div>
+
+<div id="main-area">
+
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+    <div id="loading">
+      <div class="spinner"></div>
+      <span id="loading-msg">Loading mesh…</span>
+    </div>
+  </div>
+
+  <div id="sidebar">
+    <div class="label">
+      Picked Points<span id="count-badge">0</span>
+    </div>
+
+    <div id="points-list">
+      <p class="empty-hint">Click the mesh surface to add voxel coordinates.</p>
+    </div>
+
+    <!-- Live segmentation preview status -->
+    <div id="preview-status">Preview: run workflow to enable</div>
+
+    <div id="controls">
+      <div id="status">No points selected yet.</div>
+      <button id="btn-confirm" class="action" disabled>✓ Confirm &amp; Send</button>
+      <button id="btn-clear"   class="action">✕ Clear All</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Three.js r169 via importmap (CDN) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
+
+// ── URL parameters ─────────────────────────────────────────
+const params     = new URLSearchParams(window.location.search);
+const meshFile   = params.get('mesh')       || '';
+const meshType   = params.get('meshType')   || 'output';
+const resolution = parseInt(params.get('resolution') || '64', 10);
+const nodeId     = params.get('nodeId')     || '';
+const subfolder  = params.get('subfolder')  || '';
+
+// ── Renderer ───────────────────────────────────────────────
+const canvas    = document.getElementById('canvas');
+const wrap      = document.getElementById('canvas-wrap');
+const renderer  = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setClearColor(0x0e0e1c);
+renderer.shadowMap.enabled = false;
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 1000);
+camera.position.set(2, 1.5, 2);
+
+// Grid helper for orientation cue
+const grid = new THREE.GridHelper(4, 20, 0x222240, 0x1a1a38);
+scene.add(grid);
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(3, 5, 4);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x8888ff, 0.3);
+fill.position.set(-3, 0, -4);
+scene.add(fill);
+
+// Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+
+// Resize
+function onResize() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(onResize).observe(wrap);
+onResize();
+
+// Animation
+(function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+
+// ── Marker group & raycasting ──────────────────────────────
+const markerGroup = new THREE.Group();
+scene.add(markerGroup);
+const raycaster = new THREE.Raycaster();
+const pointer   = new THREE.Vector2();
+let   meshNodes = [];   // THREE.Mesh objects for raycasting
+
+// After load: world_pos = meshScale * (local_pos - meshCenter)
+// normalized  = world_pos / 2  ∈ [-0.5, 0.5]^3
+// voxel       = floor((normalized + 0.5) * resolution)
+let meshScale  = 1;
+let meshCenter = new THREE.Vector3();
+let bboxSized  = new THREE.Vector3();
+
+// ── Per-mesh saved state for preview coloring ──────────────
+// Maps mesh.uuid → { originalMaterial, nonIndexedGeometry? }
+const meshSavedState = new Map();
+
+// ── State ──────────────────────────────────────────────────
+let pickedPoints   = [];   // [{x, y, z}] voxel-space integers
+let previewPending = false;
+let previewDebounce = null;
+
+// ── Load GLB ───────────────────────────────────────────────
+function setLoadMsg(msg)  { document.getElementById('loading-msg').textContent = msg; }
+function hideLoading()    { document.getElementById('loading').style.display = 'none'; }
+function setStatus(msg)   { document.getElementById('status').textContent = msg; }
+
+function setPreviewStatus(msg, cls = '') {
+  const el = document.getElementById('preview-status');
+  el.innerHTML = msg;
+  el.className = cls;
+}
+
+if (!meshFile) {
+  setLoadMsg('No mesh available. Queue the workflow once first.');
+} else {
+  const meshUrl = `/view?filename=${encodeURIComponent(meshFile)}`
+    + `&type=${encodeURIComponent(meshType)}&subfolder=${encodeURIComponent(subfolder)}`;
+
+  new GLTFLoader().load(
+    meshUrl,
+    (gltf) => {
+      const group = gltf.scene;
+      scene.add(group);
+
+      // Compute original bounding box
+      const bbox = new THREE.Box3().setFromObject(group);
+      bbox.getCenter(meshCenter);
+      const size = new THREE.Vector3();
+      bbox.getSize(size);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+
+      // Normalise: scale to ±1, center at world origin
+      meshScale = 2.0 / maxDim;
+      group.scale.setScalar(meshScale);
+      group.position.copy(meshCenter).multiplyScalar(-meshScale);
+
+      const wBbox = new THREE.Box3().setFromObject(group);
+      wBbox.getSize(bboxSized);
+
+      // Collect raycasting targets & save original materials
+      group.traverse(child => {
+        if (!child.isMesh) return;
+        meshNodes.push(child);
+        // Convert to non-indexed geometry once at load time — makes
+        // per-face vertex-color assignment straightforward later.
+        if (child.geometry.index) {
+          child.geometry = child.geometry.toNonIndexed();
+        }
+        meshSavedState.set(child.uuid, {
+          originalMaterial: child.material,
+        });
+      });
+
+      const camDist = Math.max(bboxSized.x, bboxSized.y, bboxSized.z) * 1.6;
+      camera.position.set(camDist, camDist * 0.8, camDist);
+      camera.lookAt(0, 0, 0);
+      controls.target.set(0, 0, 0);
+      controls.update();
+
+      hideLoading();
+      setStatus('Mesh loaded. Click the surface to add points.');
+      if (nodeId) {
+        setPreviewStatus('Preview ready — click to segment', '');
+      }
+    },
+    undefined,
+    (err) => {
+      setLoadMsg('Failed to load mesh: ' + (err.message || err));
+    }
+  );
+}
+
+// ── World ↔ Voxel helpers ────────────────────────────────────
+function worldToVoxel(wx, wy, wz) {
+  const vx = Math.max(0, Math.min(resolution - 1, Math.floor((wx / 2 + 0.5) * resolution)));
+  const vy = Math.max(0, Math.min(resolution - 1, Math.floor((wy / 2 + 0.5) * resolution)));
+  const vz = Math.max(0, Math.min(resolution - 1, Math.floor((wz / 2 + 0.5) * resolution)));
+  return [vx, vy, vz];
+}
+function voxelKey(vx, vy, vz) {
+  return vx * resolution * resolution + vy * resolution + vz;
+}
+
+// ── Preview face-coloring ─────────────────────────────────────
+// componentData: null  |  [{set: Set<number>, r,g,b: float}, ...]
+//   One entry per click point; each face is colored with the component color
+//   of whichever component's voxels it falls inside (first-match wins).
+//   Pass null to restore original materials.
+// voxelR: the resolution used when building the sets (must match key formula).
+function applyPreviewColors(componentData, voxelR) {
+  if (!meshNodes.length) return;
+
+  const hasSelection = componentData && componentData.length > 0 &&
+                       componentData.some(c => c.set.size > 0);
+  const tmp = new THREE.Vector3();
+  const R = voxelR || resolution;
+
+  meshNodes.forEach(mesh => {
+    const saved = meshSavedState.get(mesh.uuid);
+    if (!saved) return;
+
+    if (!hasSelection) {
+      if (mesh.geometry.attributes.color) mesh.geometry.deleteAttribute('color');
+      mesh.material = saved.originalMaterial;
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    const mw = mesh.matrixWorld;
+    const pos = mesh.geometry.attributes.position;
+    const numFaces = Math.floor(pos.count / 3);
+    const colorArr = new Float32Array(pos.count * 3);
+
+    for (let i = 0; i < numFaces; i++) {
+      // Face centroid in world space
+      let cx = 0, cy = 0, cz = 0;
+      for (let j = 0; j < 3; j++) {
+        tmp.fromBufferAttribute(pos, i * 3 + j).applyMatrix4(mw);
+        cx += tmp.x; cy += tmp.y; cz += tmp.z;
+      }
+      cx /= 3; cy /= 3; cz /= 3;
+
+      // Convert centroid to voxel coords using R.
+      const vx = Math.max(0, Math.min(R - 1, Math.floor((cx / 2 + 0.5) * R)));
+      const vy = Math.max(0, Math.min(R - 1, Math.floor((cy / 2 + 0.5) * R)));
+      const vz = Math.max(0, Math.min(R - 1, Math.floor((cz / 2 + 0.5) * R)));
+
+      // Find which component (if any) contains this face (±1 neighbourhood).
+      let fr = 0.28, fg = 0.30, fb = 0.36;  // default = dark slate
+      outer: for (const comp of componentData) {
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dz = -1; dz <= 1; dz++) {
+              const nx = Math.max(0, Math.min(R - 1, vx + dx));
+              const ny = Math.max(0, Math.min(R - 1, vy + dy));
+              const nz = Math.max(0, Math.min(R - 1, vz + dz));
+              if (comp.set.has(nx * R * R + ny * R + nz)) {
+                fr = comp.r; fg = comp.g; fb = comp.b;
+                break outer;
+              }
+            }
+          }
+        }
+      }
+
+      for (let j = 0; j < 3; j++) {
+        const vi = (i * 3 + j) * 3;
+        colorArr[vi] = fr; colorArr[vi + 1] = fg; colorArr[vi + 2] = fb;
+      }
+    }
+
+    const colorAttr = new THREE.BufferAttribute(colorArr, 3);
+    mesh.geometry.setAttribute('color', colorAttr);
+    mesh.material = new THREE.MeshLambertMaterial({
+      vertexColors: true, side: THREE.DoubleSide,
+    });
+
+    // Count faces that got a component color (R != default 0.28)
+    const defaultR = 0.28;
+    let coloredFaces = 0;
+    for (let i = 0; i < numFaces; i++) {
+      if (Math.abs(colorArr[i * 9] - defaultR) > 0.01) coloredFaces++;
+    }
+    console.log('[SegviGen preview] applyPreviewColors: R=', R,
+                'numFaces=', numFaces, 'coloredFaces=', coloredFaces,
+                'components=', componentData.length);
+  });
+}
+
+// ── Preview request (debounced 80 ms) ─────────────────────────
+async function requestPreview() {
+  if (!nodeId) return;
+
+  clearTimeout(previewDebounce);
+  previewDebounce = setTimeout(async () => {
+    if (pickedPoints.length === 0) {
+      applyPreviewColors(null);
+      setPreviewStatus('Preview ready — click to segment', '');
+      return;
+    }
+
+    setPreviewStatus('<span class="spinner-sm"></span>Segmenting…', 'loading');
+
+    const pts = pickedPoints.map(p => [p.x, p.y, p.z]);
+    try {
+      const resp = await fetch('/segvigen/preview_segment', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ nodeId, points: pts, steps: 2 }),
+      });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      }
+      const data = await resp.json();
+
+      if (!data.ok) {
+        if (data.error === 'no_cache') {
+          setPreviewStatus('Run the workflow once to enable preview', 'error');
+        } else {
+          setPreviewStatus('Preview error: ' + (data.error || 'unknown'), 'error');
+        }
+        applyPreviewColors(null);
+        return;
+      }
+
+      // Build per-component Sets colored with each dot's MARKER_COLORS entry.
+      const R = data.voxel_resolution || resolution;
+      const comps = data.components || [];
+      const componentData = comps.map((voxels, idx) => {
+        const hex = MARKER_COLORS[idx % MARKER_COLORS.length];
+        const s = new Set();
+        for (const [vx, vy, vz] of voxels) s.add(vx * R * R + vy * R + vz);
+        return {
+          set: s,
+          r: ((hex >> 16) & 0xff) / 255,
+          g: ((hex >>  8) & 0xff) / 255,
+          b: ( hex        & 0xff) / 255,
+        };
+      });
+      const total = comps.reduce((a, c) => a + c.length, 0);
+      console.log('[SegviGen preview] components:', comps.length,
+                  'total voxels:', total, 'R=', R);
+
+      applyPreviewColors(componentData, R);
+
+      const pct = total;
+      setPreviewStatus(
+        `● Segmented: ${pct} voxel${pct !== 1 ? 's' : ''}`,
+        pct > 0 ? 'active' : ''
+      );
+    } catch (err) {
+      console.error('[SegviGen preview] ERROR:', err);
+      setPreviewStatus('Preview unavailable: ' + String(err).slice(0, 80), 'error');
+      applyPreviewColors(null);
+    }
+  }, 80);
+}
+
+// ── Click handling (distinguish click from drag) ───────────
+let dragStartX = 0, dragStartY = 0, dragging = false;
+
+canvas.addEventListener('mousedown', e => {
+  dragStartX = e.clientX; dragStartY = e.clientY; dragging = false;
+});
+canvas.addEventListener('mousemove', e => {
+  if (Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 4) dragging = true;
+});
+canvas.addEventListener('mouseup', e => {
+  if (dragging || meshNodes.length === 0) return;
+  if (pickedPoints.length >= 10) { setStatus('Maximum 10 points. Remove some first.'); return; }
+
+  const rect = canvas.getBoundingClientRect();
+  pointer.x =  ((e.clientX - rect.left)  / rect.width)  * 2 - 1;
+  pointer.y = -((e.clientY - rect.top)   / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(meshNodes, false);
+  if (!hits.length) return;
+
+  const worldPt = hits[0].point.clone();
+  const [vx, vy, vz] = worldToVoxel(worldPt.x, worldPt.y, worldPt.z);
+
+  pickedPoints.push({ x: vx, y: vy, z: vz });
+  addMarker(worldPt, pickedPoints.length - 1);
+  refreshUI();
+  requestPreview();
+});
+
+// ── Marker helpers ─────────────────────────────────────────
+const MARKER_COLORS = [
+  0xff4455, 0xff8c00, 0xffdd00, 0x44ee66,
+  0x22ccee, 0x8855ff, 0xff55cc, 0x00ffaa,
+  0xff9933, 0xaaffdd,
+];
+const markerRadius = () =>
+  Math.max(bboxSized.x, bboxSized.y, bboxSized.z) * 0.025 || 0.04;
+
+function addMarker(worldPt, idx) {
+  const geo  = new THREE.SphereGeometry(markerRadius(), 10, 10);
+  const mat  = new THREE.MeshBasicMaterial({ color: MARKER_COLORS[idx % MARKER_COLORS.length] });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(worldPt);
+  mesh.userData.ptIndex = idx;
+  markerGroup.add(mesh);
+}
+
+function rebuildMarkers() {
+  markerGroup.clear();
+  pickedPoints.forEach((pt, i) => {
+    const nx = (pt.x + 0.5) / resolution - 0.5;
+    const ny = (pt.y + 0.5) / resolution - 0.5;
+    const nz = (pt.z + 0.5) / resolution - 0.5;
+    addMarker(new THREE.Vector3(nx * 2, ny * 2, nz * 2), i);
+  });
+}
+
+// ── UI ─────────────────────────────────────────────────────
+function refreshUI() {
+  document.getElementById('count-badge').textContent = pickedPoints.length;
+  document.getElementById('btn-confirm').disabled = pickedPoints.length === 0;
+
+  const list = document.getElementById('points-list');
+  if (pickedPoints.length === 0) {
+    list.innerHTML = '<p class="empty-hint">Click the mesh surface to add voxel coordinates.</p>';
+    setStatus('No points selected yet.');
+    return;
+  }
+
+  list.innerHTML = '';
+  pickedPoints.forEach((pt, i) => {
+    const div = document.createElement('div');
+    div.className = 'point-item';
+    div.innerHTML = `
+      <span class="point-num">P${i + 1}</span>
+      <span class="point-coords">${pt.x}, ${pt.y}, ${pt.z}</span>
+      <button class="rm-btn" data-i="${i}" title="Remove">×</button>`;
+    list.appendChild(div);
+  });
+
+  list.querySelectorAll('.rm-btn').forEach(btn =>
+    btn.addEventListener('click', () => {
+      pickedPoints.splice(parseInt(btn.dataset.i), 1);
+      rebuildMarkers();
+      refreshUI();
+      requestPreview();
+    })
+  );
+
+  const n = pickedPoints.length;
+  setStatus(`${n} point${n !== 1 ? 's' : ''} ready. Click "Confirm" to send.`);
+}
+
+// ── Buttons ────────────────────────────────────────────────
+document.getElementById('btn-confirm').addEventListener('click', async () => {
+  const arr = pickedPoints.map(p => [p.x, p.y, p.z]);
+  if (arr.length === 0) { setStatus('No points to send.'); return; }
+
+  document.getElementById('btn-confirm').disabled = true;
+  setStatus('Sending…');
+
+  try {
+    const resp = await fetch('/segvigen/confirm_points', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ nodeId, points: arr }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const result = await resp.json();
+    if (result.ok) {
+      setStatus(`✓ Sent ${arr.length} point${arr.length !== 1 ? 's' : ''} to ComfyUI.`);
+      setTimeout(() => window.close(), 1200);
+    } else {
+      throw new Error('Server returned ok:false');
+    }
+  } catch (err) {
+    setStatus(`Error: ${err.message}. Try again.`);
+    document.getElementById('btn-confirm').disabled = false;
+  }
+});
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  pickedPoints = [];
+  markerGroup.clear();
+  applyPreviewColors(null);
+  setPreviewStatus(nodeId ? 'Preview ready — click to segment' : 'Preview: run workflow to enable', '');
+  refreshUI();
+});
+</script>
+
+</body>
+</html>

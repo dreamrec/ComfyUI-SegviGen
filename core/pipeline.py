@@ -13,6 +13,28 @@ import torch.nn as nn
 log = logging.getLogger("segvigen")
 
 
+class ComfyCompatFlowModel(nn.Module):
+    """
+    Thin wrapper that makes SLatFlowModel compatible with ComfyUI's ModelPatcher.
+
+    ComfyUI's model_patcher.unpatch_model() sets ``self.model.device = device_to``
+    to track offload state.  SLatFlowModel defines ``device`` as a read-only
+    ``@property``, which raises AttributeError on assignment.  This wrapper
+    exposes ``device`` as a plain instance attribute that ModelPatcher can set
+    freely, while forwarding all inference calls to the inner model.
+    """
+
+    def __init__(self, flow_model: nn.Module):
+        super().__init__()
+        self._flow = flow_model
+        # Mirror attrs the sampler reads directly from the model object
+        self.in_channels = flow_model.in_channels
+        self.out_channels = flow_model.out_channels
+
+    def forward(self, x, t, cond=None, **kwargs):
+        return self._flow(x, t, cond=cond, **kwargs)
+
+
 class Gen3DSeg(nn.Module):
     """
     Wrapper around the SegviGen flow model checkpoint.
@@ -200,17 +222,69 @@ def encode_voxel_to_slat(encoder, grid: "np.ndarray", model_config: dict) -> tor
     return latent
 
 
+def get_flow_model(model_config: dict) -> nn.Module:
+    """
+    Instantiate SLatFlowModel architecture for SegviGen.
+
+    Architecture derived directly from full_seg.safetensors header inspection:
+      input_layer  [1536, 64]   → in_channels=64,  model_channels=1536
+      out_layer    [32,  1536]  → out_channels=32
+      cross_attn   to_kv [3072,1024] → cond_channels=1024
+      blocks count 30
+      q/k_rms_norm.gamma [12,128] → num_heads=12, num_head_channels=128
+      adaLN_modulation present   → share_mod=True
+      mlp.mlp.0    [8192,1536]  → mlp_ratio=8192/1536
+      no rope keys               → pe_mode="ape"
+    """
+    import trellis2.models as _t2m
+
+    args = dict(
+        resolution=512,
+        in_channels=64,
+        model_channels=1536,
+        cond_channels=1024,
+        out_channels=32,
+        num_blocks=30,
+        num_head_channels=128,
+        mlp_ratio=8192 / 1536,   # 5.333… → int(1536 * ratio) == 8192 ✓
+        pe_mode="ape",
+        dtype="float16",
+        share_mod=True,
+        qk_rms_norm=True,
+        qk_rms_norm_cross=True,
+    )
+    log.info("SegviGen: instantiating SLatFlowModel (hardcoded arch from checkpoint)")
+    model = _t2m.SLatFlowModel(**args)
+
+    # ComfyUI's ModelPatcher.unpatch_model() sets self.model.device = device_to
+    # to track offload state.  SLatFlowModel defines device as a read-only
+    # @property (returns next(parameters()).device).  Patch the class once to
+    # add a no-op setter so ModelPatcher can write the attribute freely.
+    _cls = type(model)
+    _prop = _cls.__dict__.get("device")
+    if isinstance(_prop, property) and _prop.fset is None:
+        _cls.device = _prop.setter(lambda self, v: None)
+
+    return model
+
+
 def load_segvigen_checkpoint(model_config: dict, checkpoint_path: str) -> Gen3DSeg:
     """
     Load a SegviGen checkpoint into a Gen3DSeg wrapper.
+
+    The checkpoint was saved from a Gen3DSeg(flow_model) instance, so all keys
+    carry a 'flow_model.' prefix.  We strip it to load into the bare
+    SLatFlowModel, then re-wrap in Gen3DSeg for the forward() interface.
     """
     import safetensors.torch
-    from stages import get_flow_model  # ComfyUI-TRELLIS2/nodes/stages.py
 
     log.info(f"SegviGen: loading checkpoint from {checkpoint_path}")
     flow_model = get_flow_model(model_config)
-    state_dict = safetensors.torch.load_file(checkpoint_path)
-    flow_model.load_state_dict(state_dict, strict=False)
+    sd = safetensors.torch.load_file(checkpoint_path, device="cpu")
+    stripped = {k[len("flow_model."):]: v
+                for k, v in sd.items() if k.startswith("flow_model.")}
+    flow_model.load_state_dict(stripped, strict=False)
+    del sd, stripped
     return Gen3DSeg(flow_model)
 
 

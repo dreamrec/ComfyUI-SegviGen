@@ -85,7 +85,7 @@ def mesh_to_voxel_grid(source, resolution: int = 64, simplify_faces: int = 100_0
     # Simplify if mesh is very dense
     if len(mesh.faces) > simplify_faces:
         log.info(f"Simplifying mesh from {len(mesh.faces)} to {simplify_faces} faces")
-        mesh = mesh.simplify_quadric_decimation(simplify_faces)
+        mesh = mesh.simplify_quadric_decimation(face_count=simplify_faces)
 
     mesh = _repair_mesh(mesh)
     mesh = _normalize_to_unit_cube(mesh)

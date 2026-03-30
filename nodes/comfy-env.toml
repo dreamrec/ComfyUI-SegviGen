@@ -15,6 +15,8 @@ trimesh = { version = "*", extras = ["easy"] }
 # ML utilities
 einops = "*"
 zstandard = "*"
+scikit-learn = "*"
+scikit-image = "*"
 
 # Image processing
 pillow = ">=9.0.0"

@@ -1,7 +1,7 @@
 """
 SegviGen output nodes:
-  - SegviGenRenderPreview: colored segment preview images
-  - SegviGenExportParts: per-segment GLB files
+  - SegviGenRenderPreview: 2D colored segment preview images
+  - SegviGenExportParts (Splitter): split mesh into named parts, export combined + individual GLBs
 """
 import logging
 import os
@@ -50,14 +50,20 @@ class SegviGenRenderPreview:
 
 
 class SegviGenExportParts:
-    """Export segmented mesh parts as individual GLB files."""
+    """Split segmented mesh into named parts and export as GLB files.
+
+    Outputs:
+      - combined_file: single GLB with all parts as named sub-objects
+        (opens in Blender/Unity/etc. as separate selectable objects)
+      - individual_parts: newline-separated paths to individual part GLBs
+    """
 
     CATEGORY = "SegviGen"
     FUNCTION = "export"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("output_paths",)
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("combined_file", "individual_parts")
 
-    OUTPUT_NODE = True  # tells ComfyUI this node has side effects
+    OUTPUT_NODE = True
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -66,11 +72,6 @@ class SegviGenExportParts:
                 "seg_result": ("SEGVIGEN_SEG_RESULT",),
             },
             "optional": {
-                "texture_size": (
-                    ["256", "512", "1024", "2048", "4096"],
-                    {"default": "2048",
-                     "tooltip": "UV texture atlas resolution for exported GLBs"},
-                ),
                 "max_faces": ("INT", {
                     "default": 100_000, "min": 10_000, "max": 500_000, "step": 10_000,
                 }),
@@ -78,18 +79,22 @@ class SegviGenExportParts:
                     "default": 50, "min": 1, "max": 10_000, "step": 10,
                     "tooltip": "Discard segments smaller than this face count.",
                 }),
+                "filename_prefix": ("STRING", {"default": "segvigen"}),
             },
         }
 
     def export(
         self,
         seg_result: dict,
-        texture_size: str = "2048",
         max_faces: int = 100_000,
         min_segment_faces: int = 50,
+        filename_prefix: str = "segvigen",
     ):
+        import numpy as np
+        import trimesh
         import folder_paths
         from core.split import split_mesh_by_labels
+        from core.renderer import SEGMENT_COLORS, _voxel_labels_to_face_labels
 
         check_interrupt()
 
@@ -98,63 +103,50 @@ class SegviGenExportParts:
 
         if mesh is None:
             log.warning("SegviGen export: no mesh in seg_result, skipping export")
-            return ("",)
+            return ("", "")
 
-        # Output directory: ComfyUI/output/segvigen/<timestamp>/
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_dir = os.path.join(folder_paths.output_directory, "segvigen", timestamp)
         os.makedirs(out_dir, exist_ok=True)
 
         # Convert per-voxel labels to per-face labels
         face_labels = _voxel_labels_to_face_labels(mesh, labels)
-
         parts = split_mesh_by_labels(mesh, face_labels, min_faces=min_segment_faces)
 
-        out_paths = []
+        # ── 1. Combined GLB: all parts as named sub-objects in one file ──
+        scene = trimesh.Scene()
         for i, part in enumerate(parts):
-            # Simplify if over max_faces
             if hasattr(part, 'faces') and len(part.faces) > max_faces:
-                part = part.simplify_quadric_decimation(max_faces)
+                part = _simplify(part, max_faces)
 
+            # Color each part with its segment color
+            n = len(part.faces)
+            fc = np.full((n, 4), 255, dtype=np.uint8)
+            fc[:, :3] = SEGMENT_COLORS[i % len(SEGMENT_COLORS)]
+            part.visual = trimesh.visual.ColorVisuals(face_colors=fc)
+
+            name = f"part_{i:02d}"
+            scene.add_geometry(part, node_name=name, geom_name=name)
+
+        combined_path = os.path.join(out_dir, f"{filename_prefix}_parts.glb")
+        scene.export(combined_path, file_type="glb")
+        log.info(f"SegviGen: combined GLB with {len(parts)} named parts → {combined_path}")
+
+        # ── 2. Individual GLB files (one per part) ───────────────────────
+        individual_paths = []
+        for i, part in enumerate(parts):
+            if hasattr(part, 'faces') and len(part.faces) > max_faces:
+                part = _simplify(part, max_faces)
             path = os.path.join(out_dir, f"part_{i:02d}.glb")
-            part.export(path)
-            out_paths.append(path)
-            log.info(f"SegviGen: exported part {i} → {path}")
+            part.export(path, file_type="glb")
+            individual_paths.append(path)
+            log.info(f"SegviGen: part {i} ({len(part.faces)} faces) → {path}")
 
-        result = "\n".join(out_paths)
-        log.info(f"SegviGen: exported {len(parts)} parts to {out_dir}")
-        return (result,)
+        return (combined_path, "\n".join(individual_paths))
 
 
-def _voxel_labels_to_face_labels(mesh, voxel_labels) -> "np.ndarray":
-    """
-    Convert per-voxel label array [R,R,R] to per-face label array [F].
-
-    Strategy: use face centroid positions, normalize to voxel grid coords,
-    lookup the label at each centroid voxel.
-    """
-    import numpy as np
-
-    if voxel_labels is None or mesh is None:
-        return np.zeros(0, dtype=np.int32)
-
-    if not hasattr(mesh, 'faces'):
-        import trimesh
-        if isinstance(mesh, trimesh.Scene):
-            mesh = mesh.dump(concatenate=True)
-
-    n_faces = len(mesh.faces)
-    if n_faces == 0:
-        return np.zeros(0, dtype=np.int32)
-
-    R = voxel_labels.shape[0]
-    centroids = mesh.triangles_center  # [F, 3]
-
-    bounds_min = mesh.bounds[0]
-    bounds_max = mesh.bounds[1]
-    extent = np.maximum(bounds_max - bounds_min, 1e-8)
-    norm = (centroids - bounds_min) / extent  # [F, 3] in [0, 1]
-    idx = (norm * (R - 1)).round().astype(np.int32).clip(0, R - 1)
-
-    face_labels = voxel_labels[idx[:, 0], idx[:, 1], idx[:, 2]]
-    return face_labels.astype(np.int32)
+def _simplify(mesh, target_faces: int):
+    """Simplify mesh to target face count."""
+    if len(mesh.faces) <= target_faces:
+        return mesh
+    return mesh.simplify_quadric_decimation(face_count=target_faces)

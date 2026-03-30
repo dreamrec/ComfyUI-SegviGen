@@ -17,28 +17,20 @@ import torch
 
 log = logging.getLogger("segvigen")
 
-# Distinct colors for up to 20 segments (RGB 0-255)
+# Segment colors matching the picker's MARKER_COLORS so the 2D preview
+# uses the same color for each component as the 3D picker dots.
+# Source: web/picker.html MARKER_COLORS array (hex → RGB).
 SEGMENT_COLORS = np.array([
-    [220, 80,  80],   # red
-    [80,  120, 220],  # blue
-    [80,  200, 100],  # green
-    [220, 180, 60],   # yellow
-    [180, 80,  220],  # purple
-    [60,  200, 200],  # cyan
-    [220, 130, 60],   # orange
-    [140, 200, 80],   # lime
-    [220, 80,  160],  # pink
-    [100, 160, 220],  # sky blue
-    [200, 160, 80],   # tan
-    [80,  180, 160],  # teal
-    [160, 80,  80],   # maroon
-    [80,  80,  180],  # navy
-    [120, 160, 120],  # sage
-    [200, 120, 120],  # salmon
-    [120, 200, 160],  # mint
-    [160, 120, 200],  # lavender
-    [200, 200, 80],   # chartreuse
-    [80,  160, 200],  # cerulean
+    [0xff, 0x44, 0x55],  # P1 red        (#ff4455)
+    [0xff, 0x8c, 0x00],  # P2 orange     (#ff8c00)
+    [0xff, 0xdd, 0x00],  # P3 yellow     (#ffdd00)
+    [0x44, 0xee, 0x66],  # P4 green      (#44ee66)
+    [0x22, 0xcc, 0xee],  # P5 cyan       (#22ccee)
+    [0x88, 0x55, 0xff],  # P6 purple     (#8855ff)
+    [0xff, 0x55, 0xcc],  # P7 pink       (#ff55cc)
+    [0x00, 0xff, 0xaa],  # P8 mint       (#00ffaa)
+    [0xff, 0x99, 0x33],  # P9 amber      (#ff9933)
+    [0xaa, 0xff, 0xdd],  # P10 light grn (#aaffdd)
 ], dtype=np.uint8)
 
 
@@ -104,12 +96,17 @@ def _apply_label_colors(mesh, labels):
 
     if labels is not None and n_faces > 0:
         try:
-            from nodes.nodes_output import _voxel_labels_to_face_labels
             face_labels = _voxel_labels_to_face_labels(mesh, labels)
-            for i, lbl in enumerate(face_labels):
-                face_colors[i, :3] = SEGMENT_COLORS[int(lbl) % len(SEGMENT_COLORS)]
-        except Exception:
-            log.warning("SegviGen renderer: label-to-face mapping failed, using gray")
+            # Vectorized: color all faces with label > 0
+            fg_mask = face_labels > 0
+            if fg_mask.any():
+                # Labels are 1-based (BFS assigns 1,2,3...; 0=background).
+                color_idx = (face_labels[fg_mask] - 1) % len(SEGMENT_COLORS)
+                face_colors[fg_mask, :3] = SEGMENT_COLORS[color_idx]
+            log.info(f"SegviGen renderer: {int(fg_mask.sum())}/{n_faces} faces colored "
+                     f"({len(np.unique(face_labels[fg_mask]))} segments)")
+        except Exception as e:
+            log.warning("SegviGen renderer: label-to-face mapping failed (%s), using gray", e)
 
     colored = mesh.copy()
     colored.visual = trimesh.visual.ColorVisuals(face_colors=face_colors)
@@ -117,7 +114,7 @@ def _apply_label_colors(mesh, labels):
 
 
 def _render_trimesh_software(mesh, num_views: int, resolution: int) -> list:
-    """Software renderer fallback using trimesh's scene.save_image."""
+    """Software renderer fallback using trimesh's scene.save_image (pyglet)."""
     import trimesh
     import math
 
@@ -135,13 +132,151 @@ def _render_trimesh_software(mesh, num_views: int, resolution: int) -> list:
             distance * 0.3,
             distance * math.cos(angle),
         ])
-        scene.set_camera(eye, center)
-        png = scene.save_image(resolution=(resolution, resolution))
-        from PIL import Image
-        import io
-        frames.append(Image.open(io.BytesIO(png)).convert("RGB"))
+        try:
+            scene.set_camera(eye, center)
+            png = scene.save_image(resolution=(resolution, resolution))
+            from PIL import Image
+            import io
+            frames.append(Image.open(io.BytesIO(png)).convert("RGB"))
+        except Exception as e:
+            if not frames:
+                # First frame failed — pyglet/GL context issue, use matplotlib fallback
+                log.warning("SegviGen: trimesh save_image failed (%s), using matplotlib fallback", e)
+                return _render_matplotlib_fallback(mesh, num_views, resolution)
+            # Later frame failed — fill with last successful frame
+            frames.append(frames[-1].copy())
 
     return frames
+
+
+def _render_matplotlib_fallback(mesh, num_views: int, resolution: int) -> list:
+    """Matplotlib 3D renderer — produces clean square images with correct aspect ratio."""
+    import math
+    import io
+    from PIL import Image
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    verts = mesh.vertices
+    faces = mesh.faces
+    bounds = mesh.bounds
+    center = (bounds[0] + bounds[1]) / 2.0
+    # Use uniform extent on all axes so the mesh isn't distorted
+    half_extent = float((bounds[1] - bounds[0]).max()) / 2.0 * 1.15
+
+    # Build face polygons with colors
+    face_verts = verts[faces]
+    fc = None
+    if hasattr(mesh.visual, "face_colors") and mesh.visual.face_colors is not None:
+        fc = mesh.visual.face_colors[:, :3].astype(np.float32) / 255.0
+
+    dpi = 100
+    figsize = resolution / dpi
+
+    frames = []
+    for i in range(num_views):
+        angle_deg = 360.0 * i / num_views
+        fig = plt.figure(figsize=(figsize, figsize), dpi=dpi, facecolor="white")
+        # Fill the entire figure with the 3D axes — no margins
+        ax = fig.add_axes([0, 0, 1, 1], projection="3d")
+        ax.set_facecolor("white")
+        poly = Poly3DCollection(face_verts, linewidths=0.05, edgecolors=(0.4, 0.4, 0.4, 0.15))
+        if fc is not None:
+            poly.set_facecolor(fc)
+        else:
+            poly.set_facecolor((0.7, 0.7, 0.7))
+        ax.add_collection3d(poly)
+        # Uniform axis limits centered on the mesh — prevents squashing
+        ax.set_xlim(center[0] - half_extent, center[0] + half_extent)
+        ax.set_ylim(center[1] - half_extent, center[1] + half_extent)
+        ax.set_zlim(center[2] - half_extent, center[2] + half_extent)
+        # Force equal aspect ratio
+        ax.set_box_aspect([1, 1, 1])
+        ax.view_init(elev=20, azim=angle_deg)
+        ax.axis("off")
+        buf = io.BytesIO()
+        # Use pad_inches=0 but NOT bbox_inches="tight" — this preserves
+        # the exact figsize we specified instead of cropping to content
+        fig.savefig(buf, format="png", dpi=dpi, pad_inches=0)
+        plt.close(fig)
+        buf.seek(0)
+        img = Image.open(buf).convert("RGB")
+        # Should already be resolution×resolution, but ensure it
+        if img.size != (resolution, resolution):
+            img = img.resize((resolution, resolution), Image.LANCZOS)
+        frames.append(img)
+
+    return frames
+
+
+def _voxel_labels_to_face_labels(mesh, voxel_labels) -> "np.ndarray":
+    """
+    Convert per-voxel label array [R,R,R] to per-face label array [F].
+
+    Strategy:
+    1. First try direct grid lookup (fast path).
+    2. For faces that land on empty voxels (label=0), use KD-tree nearest-neighbor
+       search against occupied voxels to find the closest labeled voxel.
+       This handles the sparsity of the voxel grid — the 64³ grid has ~30k occupied
+       voxels out of 262k total, so many face centroids land in empty space.
+
+    Uses the same uniform-scale normalization as voxel.py's _normalize_to_unit_cube:
+    center the mesh, scale by 1/max_extent so the longest axis fits in [-0.5, 0.5].
+    """
+    import trimesh as _trimesh
+
+    if voxel_labels is None or mesh is None:
+        return np.zeros(0, dtype=np.int32)
+
+    if not hasattr(mesh, 'faces'):
+        if isinstance(mesh, _trimesh.Scene):
+            mesh = mesh.dump(concatenate=True)
+
+    n_faces = len(mesh.faces)
+    if n_faces == 0:
+        return np.zeros(0, dtype=np.int32)
+
+    R = voxel_labels.shape[0]
+    centroids = mesh.triangles_center  # [F, 3]
+
+    bounds_min = mesh.bounds[0]
+    bounds_max = mesh.bounds[1]
+    center     = (bounds_min + bounds_max) / 2.0
+    max_extent = float((bounds_max - bounds_min).max())
+    if max_extent < 1e-8:
+        return np.zeros(n_faces, dtype=np.int32)
+    norm = (centroids - center) / max_extent   # [F, 3] in approx [-0.5, 0.5]
+
+    # Convert normalized coords to voxel grid coordinates (continuous)
+    voxel_coords = (norm + 0.5) * R  # [F, 3] in [0, R]
+    idx = np.round(voxel_coords).astype(np.int32).clip(0, R - 1)
+
+    # Fast path: direct grid lookup
+    face_labels = voxel_labels[idx[:, 0], idx[:, 1], idx[:, 2]].astype(np.int32)
+
+    # Fix unlabeled faces using KD-tree nearest-neighbor against occupied voxels
+    unlabeled = face_labels == 0
+    n_unlabeled = int(unlabeled.sum())
+    if n_unlabeled > 0:
+        # Build KD-tree from occupied (labeled) voxel positions
+        occupied_mask = voxel_labels > 0
+        occupied_ijk = np.argwhere(occupied_mask)  # [K, 3]
+        if len(occupied_ijk) > 0:
+            from scipy.spatial import cKDTree
+            tree = cKDTree(occupied_ijk.astype(np.float64))
+            # Query for each unlabeled face centroid (in voxel coords)
+            query_pts = voxel_coords[unlabeled]  # [U, 3]
+            _, nn_idx = tree.query(query_pts, k=1)
+            nn_ijk = occupied_ijk[nn_idx]
+            face_labels[unlabeled] = voxel_labels[
+                nn_ijk[:, 0], nn_ijk[:, 1], nn_ijk[:, 2]
+            ].astype(np.int32)
+            log.info(f"SegviGen: KD-tree fixed {n_unlabeled} unlabeled faces "
+                     f"(out of {n_faces} total)")
+
+    return face_labels
 
 
 def _render_nvdiffrast(mesh, num_views: int, resolution: int) -> list:

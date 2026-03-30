@@ -13,11 +13,12 @@ import logging
 log = logging.getLogger("segvigen")
 
 HF_REPO = "Aero-Ex/SegviGen"
+HF_REPO_INTERACTIVE = "fenghora/SegviGen"
 
-# Verified against https://huggingface.co/Aero-Ex/SegviGen/tree/main (2025-03-23):
-#   full_seg.safetensors           — 2.58 GB  base segmentation model
-#   full_seg_w_2d_map.safetensors  — 2.62 GB  variant with 2D map features
+# Full segmentation checkpoint (automatic mode)
 CHECKPOINT_FILENAME = "full_seg.safetensors"
+# Interactive segmentation checkpoint (point-guided mode)
+INTERACTIVE_CHECKPOINT = "interactive_seg.ckpt"
 
 
 def ensure_checkpoint(models_dir: str) -> str:
@@ -58,6 +59,41 @@ def ensure_checkpoint(models_dir: str) -> str:
             f"SegviGen: failed to download checkpoint.\n"
             f"Manual download: https://huggingface.co/{HF_REPO}\n"
             f"Place '{CHECKPOINT_FILENAME}' in: {models_dir}\n"
+            f"Error: {e}"
+        ) from e
+
+    return downloaded_path
+
+
+def ensure_interactive_checkpoint(models_dir: str) -> str:
+    """
+    Return path to the interactive SegviGen checkpoint, downloading if not present.
+
+    This is the point-guided binary segmentation model (interactive_seg.ckpt, ~7.86 GB)
+    from fenghora/SegviGen on HuggingFace.
+    """
+    ckpt_path = os.path.join(models_dir, INTERACTIVE_CHECKPOINT)
+
+    if os.path.exists(ckpt_path):
+        return ckpt_path
+
+    log.info(f"SegviGen: interactive checkpoint not found at {ckpt_path}, downloading...")
+    os.makedirs(models_dir, exist_ok=True)
+
+    try:
+        from huggingface_hub import hf_hub_download
+        downloaded_path = hf_hub_download(
+            repo_id=HF_REPO_INTERACTIVE,
+            filename=INTERACTIVE_CHECKPOINT,
+            local_dir=models_dir,
+            local_dir_use_symlinks=False,
+        )
+        log.info(f"SegviGen: interactive checkpoint downloaded to {downloaded_path}")
+    except Exception as e:
+        raise RuntimeError(
+            f"SegviGen: failed to download interactive checkpoint.\n"
+            f"Manual download: https://huggingface.co/{HF_REPO_INTERACTIVE}\n"
+            f"Place '{INTERACTIVE_CHECKPOINT}' in: {models_dir}\n"
             f"Error: {e}"
         ) from e
 
