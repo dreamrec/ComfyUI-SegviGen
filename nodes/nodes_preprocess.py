@@ -1,18 +1,41 @@
 """
 SegviGenPreprocess: background removal using BiRefNet from TRELLIS2.
 
-Import path (after sys.path injection):
-  from rembg.BiRefNet import BiRefNet
-
-BiRefNet maintains its own internal model singleton — this is TRELLIS2's
-implementation detail, not a SegviGen concern.
+TRELLIS2 ships its own rembg/BiRefNet.py inside its nodes/ directory —
+it is NOT the standard pip 'rembg' package.  We locate it at runtime by
+scanning sys.path for any directory that contains rembg/BiRefNet.py and
+load it directly with importlib, avoiding any dependency on package naming.
 """
 import logging
+import importlib.util
+import os
+import sys
 import numpy as np
 
 from .helpers import tensor_to_pil, pil_to_tensor, check_interrupt
 
 log = logging.getLogger("segvigen")
+
+
+def _load_birefnet():
+    """Return TRELLIS2's BiRefNet class, loading it from disk on first call."""
+    for p in sys.path:
+        if not p:
+            continue
+        candidate = os.path.join(p, "rembg", "BiRefNet.py")
+        if os.path.isfile(candidate):
+            spec = importlib.util.spec_from_file_location(
+                "_segvigen_trellis2_birefnet", candidate
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            log.info(f"SegviGen: loaded BiRefNet from {candidate}")
+            return mod.BiRefNet
+    raise ImportError(
+        "SegviGen: cannot find TRELLIS2's rembg/BiRefNet.py on sys.path.\n"
+        "Make sure ComfyUI-TRELLIS2 is installed and its nodes/ directory "
+        "is on sys.path."
+    )
 
 
 class SegviGenPreprocess:
@@ -41,7 +64,6 @@ class SegviGenPreprocess:
     def preprocess(self, image, background_color: str = "black"):
         import torch
         import comfy.model_management as mm
-        from rembg.BiRefNet import BiRefNet
         from PIL import Image
 
         check_interrupt()
@@ -49,7 +71,7 @@ class SegviGenPreprocess:
         pil_img = tensor_to_pil(image)
 
         log.info("SegviGen: running BiRefNet background removal")
-        birefnet = BiRefNet()
+        birefnet = _load_birefnet()()
         rgba_result = birefnet(pil_img)  # returns RGBA PIL image
 
         # Extract alpha as mask
