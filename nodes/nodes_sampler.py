@@ -337,10 +337,17 @@ class SegviGenInteractiveSampler:
         check_interrupt()
 
         if not points or len(points) == 0:
-            raise ValueError(
-                "SegviGen Interactive: no points provided. "
-                "Open the 3D picker and click at least one point."
+            # First-run passthrough: the MeshPicker has already registered the
+            # mesh in the browser UI at this point.  Return a no-op result so
+            # downstream Export/Render nodes don't crash — the user can now open
+            # the 3D picker, click points, and run again.
+            log.info(
+                "SegviGen: no points provided — mesh registered in picker. "
+                "Click '🎯 Open 3D Picker' on the MeshPicker node, select "
+                "the part(s) you want, then hit Run again."
             )
+            return ({"latent": None, "labels": None,
+                     "voxel": slat.get("voxel"), "mesh": trimesh},)
 
         # ── Load interactive checkpoint ──────────────────────────────────
         ckpt_path = _get_interactive_checkpoint_path()

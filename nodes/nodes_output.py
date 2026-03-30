@@ -113,6 +113,13 @@ class SegviGenExportParts:
         face_labels = _voxel_labels_to_face_labels(mesh, labels)
         parts = split_mesh_by_labels(mesh, face_labels, min_faces=min_segment_faces)
 
+        if not parts:
+            log.info(
+                "SegviGen: no segments to export — mesh is registered in picker. "
+                "Click '🎯 Open 3D Picker', select part(s), then run again."
+            )
+            return ("", "")
+
         # ── 1. Combined GLB: all parts as named sub-objects in one file ──
         scene = trimesh.Scene()
         for i, part in enumerate(parts):
