@@ -34,6 +34,9 @@ SEGMENT_COLORS = np.array([
 ], dtype=np.uint8)
 
 
+_MAX_PREVIEW_FACES = 30_000  # matplotlib hangs above ~50k; keep well under that
+
+
 def render_segmentation_preview(
     seg_result: dict,
     num_views: int = 8,
@@ -59,6 +62,20 @@ def render_segmentation_preview(
     if mesh is None:
         log.warning("SegviGen renderer: no mesh in seg_result, returning placeholder")
         return _placeholder_image(num_views, resolution)
+
+    # Decimate BEFORE coloring: _apply_label_colors assigns one color per face,
+    # so we must decimate first — decimation merges faces and would discard colors.
+    # This also prevents matplotlib from hanging on 1M+ face meshes.
+    if hasattr(mesh, 'faces') and len(mesh.faces) > _MAX_PREVIEW_FACES:
+        orig_faces = len(mesh.faces)
+        try:
+            mesh = mesh.simplify_quadric_decimation(face_count=_MAX_PREVIEW_FACES)
+            log.info(
+                f"SegviGen renderer: decimated {orig_faces} → {len(mesh.faces)} faces "
+                f"for preview (limit={_MAX_PREVIEW_FACES})"
+            )
+        except Exception as e:
+            log.warning(f"SegviGen renderer: decimation failed ({e}), using full mesh")
 
     # Apply per-face segment colors to mesh
     colored_mesh = _apply_label_colors(mesh, labels)

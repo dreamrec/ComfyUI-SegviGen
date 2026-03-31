@@ -130,6 +130,20 @@ class SegviGenMeshPicker:
             f"resolution={voxel_resolution}, mesh={mesh_filename!r}"
         )
 
+        # Update the BFS preview cache so the picker UI can highlight voxel
+        # components when the user hovers/clicks in the 3D viewer.
+        # Must happen here (main process, every run) — the sampler only runs
+        # after points are already selected, which is too late for first-run.
+        if unique_id is not None and slat.get("voxel") is not None:
+            try:
+                from core.preview_cache import store as _cache_store
+                _cache_store(
+                    str(unique_id),
+                    {"slat": slat, "voxel_resolution": voxel_resolution},
+                )
+            except Exception as _exc:
+                log.warning(f"SegviGen picker: preview cache update failed: {_exc}")
+
         return {
             "ui": {
                 "mesh_filename":   [mesh_filename],
