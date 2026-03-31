@@ -106,8 +106,9 @@ class SegviGenExportParts:
             return ("", "")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = os.path.join(folder_paths.output_directory, "segvigen", timestamp)
-        os.makedirs(out_dir, exist_ok=True)
+        # Individual parts go in a timestamped subfolder (stays tidy).
+        parts_dir = os.path.join(folder_paths.output_directory, "segvigen", timestamp)
+        os.makedirs(parts_dir, exist_ok=True)
 
         # Convert per-voxel labels to per-face labels
         face_labels = _voxel_labels_to_face_labels(mesh, labels)
@@ -121,6 +122,10 @@ class SegviGenExportParts:
             return ("", "")
 
         # ── 1. Combined GLB: all parts as named sub-objects in one file ──
+        # Saved to the OUTPUT ROOT (no subfolder) so ComfyUI's Preview3D node
+        # can load it — Preview3D.execute passes the filename string directly to
+        # PreviewUI3D which the frontend resolves via /view?filename=X&type=output.
+        # An absolute or subfolder path would silently fail to load.
         scene = trimesh.Scene()
         for i, part in enumerate(parts):
             if hasattr(part, 'faces') and len(part.faces) > max_faces:
@@ -135,21 +140,23 @@ class SegviGenExportParts:
             name = f"part_{i:02d}"
             scene.add_geometry(part, node_name=name, geom_name=name)
 
-        combined_path = os.path.join(out_dir, f"{filename_prefix}_parts.glb")
+        combined_filename = f"{filename_prefix}_parts_{timestamp}.glb"
+        combined_path = os.path.join(folder_paths.output_directory, combined_filename)
         scene.export(combined_path, file_type="glb")
-        log.info(f"SegviGen: combined GLB with {len(parts)} named parts → {combined_path}")
+        log.info(f"SegviGen: combined GLB ({len(parts)} parts) → {combined_path}")
 
-        # ── 2. Individual GLB files (one per part) ───────────────────────
+        # ── 2. Individual GLB files (one per part, in timestamped subfolder) ─
         individual_paths = []
         for i, part in enumerate(parts):
             if hasattr(part, 'faces') and len(part.faces) > max_faces:
                 part = _simplify(part, max_faces)
-            path = os.path.join(out_dir, f"part_{i:02d}.glb")
+            path = os.path.join(parts_dir, f"part_{i:02d}.glb")
             part.export(path, file_type="glb")
             individual_paths.append(path)
             log.info(f"SegviGen: part {i} ({len(part.faces)} faces) → {path}")
 
-        return (combined_path, "\n".join(individual_paths))
+        # Return just the filename (no path) for Preview3D compatibility.
+        return (combined_filename, "\n".join(individual_paths))
 
 
 def _simplify(mesh, target_faces: int):

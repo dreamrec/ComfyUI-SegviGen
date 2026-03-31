@@ -107,86 +107,100 @@ def _run_preview_inference(cache: dict, points_list: list, steps: int = 2) -> di
     """
     Geometric connected-component preview for the 3D picker.
 
-    Performs BFS flood-fill over the occupancy graph derived from the cached
-    SLAT coords (loaded from disk).  For each clicked point we find the nearest
-    occupied voxel and flood-fill its 6-connected component.
+    Uses a KD-tree radius-based BFS rather than 6-connected grid flood-fill.
+    The 512-res SLAT typically has only ~1 000–2 000 occupied voxels spread over
+    a 512³ grid (average NN distance ≈ 7 voxel units), so 6-connectivity finds
+    components of size 1.  Instead we:
+      1. Build a scipy cKDTree over all occupied voxel coords.
+      2. Compute an adaptive radius = 2.5 × median nearest-neighbour distance
+         (floor at 2, cap at 20) so the BFS jumps gaps in sparse point clouds.
+      3. BFS by expanding each frontier voxel with query_ball_point(radius).
 
     Returns a dict ready to JSON-serialise: {ok, components, voxel_resolution}.
     """
     import numpy as np
     from collections import deque
+    from scipy.spatial import cKDTree
 
-    # cache now comes from file-based preview_cache: {coords_np, voxel_resolution}
     coords_np        = cache["coords_np"]
     voxel_resolution = cache["voxel_resolution"]
-    occupied = set(map(tuple, coords_np.tolist()))
+    N = len(coords_np)
 
     log.info(
-        f"SegviGen preview BFS: {len(occupied)} occupied voxels, "
+        f"SegviGen preview BFS: {N} occupied voxels, "
         f"R={voxel_resolution}, {len(points_list)} click points"
     )
 
-    # ── BFS flood-fill per click point, keep components separate ────────────
-    # Each component is returned as its own list so the JS can color it with
-    # the corresponding dot (P1=red, P2=orange, etc.).
-    labeled: set = set()          # voxels already assigned to some component
-    components: list = []         # list-of-lists, one per click point
+    if N == 0:
+        log.warning("SegviGen preview BFS: ZERO voxels — occupancy grid may be empty")
+        return {"ok": True, "components": [], "voxel_resolution": voxel_resolution}
+
+    # Build KD-tree (float64 coords for accurate distance queries)
+    tree = cKDTree(coords_np.astype(np.float64))
+
+    # ── Adaptive radius: 2.5× median nearest-neighbour distance ─────────────
+    # Sample up to 200 points to estimate the NN distribution quickly.
+    sample_n = min(200, N)
+    sample_idx = np.random.choice(N, sample_n, replace=False)
+    nn_dists, _ = tree.query(coords_np[sample_idx].astype(np.float64), k=2)
+    median_nn = float(np.median(nn_dists[:, 1]))          # col-1: nearest neighbour
+    radius = max(2.0, min(20.0, median_nn * 2.5))
+    log.info(f"SegviGen preview BFS: adaptive radius={radius:.1f} (median NN={median_nn:.1f})")
+
+    # Index array → tuple for fast membership lookups
+    coord_tuples = [tuple(c) for c in coords_np.tolist()]
+    tuple_to_idx  = {t: i for i, t in enumerate(coord_tuples)}
+
+    labeled: set = set()    # indices already assigned
+    components: list = []
 
     for pt in points_list[:10]:
         px = max(0, min(voxel_resolution - 1, int(round(pt[0]))))
         py = max(0, min(voxel_resolution - 1, int(round(pt[1]))))
         pz = max(0, min(voxel_resolution - 1, int(round(pt[2]))))
 
-        start = (px, py, pz)
+        # Snap to nearest occupied voxel
+        click_pt = np.array([[px, py, pz]], dtype=np.float64)
+        _, nn_idx = tree.query(click_pt, k=1)
+        start_idx = int(nn_idx[0])
+        snap = coord_tuples[start_idx]
+        if (px, py, pz) != snap:
+            log.info(f"SegviGen preview BFS: click ({px},{py},{pz}) snapped to {snap}")
 
-        # ── snap to nearest occupied voxel if click lands in empty space ─────
-        if start not in occupied:
-            dists = np.abs(coords_np - np.array([px, py, pz], dtype=np.int32)).sum(axis=1)
-            nearest = coords_np[int(dists.argmin())]
-            start = (int(nearest[0]), int(nearest[1]), int(nearest[2]))
-            log.info(
-                f"SegviGen preview BFS: click ({px},{py},{pz}) empty, "
-                f"snapped to ({start[0]},{start[1]},{start[2]})"
-            )
-
-        # If this point's start voxel is already inside a previous component,
-        # re-use that component (avoids re-flooding the same region).
-        if start in labeled:
+        if start_idx in labeled:
             continue
 
-        # ── 6-connected BFS flood-fill ────────────────────────────────────────
-        visited: set = {start}
-        queue: deque = deque([start])
+        # ── KD-tree radius BFS ────────────────────────────────────────────────
+        visited_idx: set = {start_idx}
+        queue: deque = deque([start_idx])
         component: list = []
 
         while queue:
-            cx, cy, cz = queue.popleft()
-            component.append([cx, cy, cz])
-            labeled.add((cx, cy, cz))
-            for dx, dy, dz in (
-                (1, 0, 0), (-1, 0, 0),
-                (0, 1, 0), (0, -1, 0),
-                (0, 0, 1), (0, 0, -1),
-            ):
-                nb = (cx + dx, cy + dy, cz + dz)
-                if nb not in visited and nb in occupied:
-                    visited.add(nb)
-                    queue.append(nb)
+            curr_idx = queue.popleft()
+            if curr_idx in labeled:
+                continue
+            component.append(list(coord_tuples[curr_idx]))
+            labeled.add(curr_idx)
+
+            nb_indices = tree.query_ball_point(
+                coords_np[curr_idx].astype(np.float64), radius
+            )
+            for nb_idx in nb_indices:
+                if nb_idx not in visited_idx:
+                    visited_idx.add(nb_idx)
+                    queue.append(nb_idx)
 
         components.append(component)
         log.info(
-            f"SegviGen preview BFS: point ({px},{py},{pz}) → "
+            f"SegviGen preview BFS: click ({px},{py},{pz}) → "
             f"component {len(components)} with {len(component)} voxels"
         )
 
     total = sum(len(c) for c in components)
     if total:
-        log.warning(
-            f"SegviGen preview BFS: {len(components)} components, "
-            f"{total} voxels total"
-        )
+        log.info(f"SegviGen preview BFS: {len(components)} components, {total} voxels total")
     else:
-        log.warning("SegviGen preview BFS: ZERO voxels — occupancy grid may be empty")
+        log.warning("SegviGen preview BFS: ZERO voxels in any component")
 
     return {"ok": True, "components": components, "voxel_resolution": voxel_resolution}
 
