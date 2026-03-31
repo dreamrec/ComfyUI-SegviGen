@@ -63,30 +63,51 @@ def render_segmentation_preview(
         log.warning("SegviGen renderer: no mesh in seg_result, returning placeholder")
         return _placeholder_image(num_views, resolution)
 
-    # Decimate BEFORE coloring: _apply_label_colors assigns one color per face,
-    # so we must decimate first — decimation merges faces and would discard colors.
+    # Subsample BEFORE coloring: _apply_label_colors assigns one color per face,
+    # so we must reduce face count first — coloring a decimated mesh would
+    # produce wrong colors since face indices change.
     # This also prevents matplotlib from hanging on 1M+ face meshes.
+    # We use random face subsampling (no extra deps) rather than quadric
+    # decimation (requires fast_simplification / pyfqmr which may be absent).
     if hasattr(mesh, 'faces') and len(mesh.faces) > _MAX_PREVIEW_FACES:
+        import trimesh as _trimesh
         orig_faces = len(mesh.faces)
         try:
-            mesh = mesh.simplify_quadric_decimation(face_count=_MAX_PREVIEW_FACES)
+            keep = np.sort(
+                np.random.choice(orig_faces, _MAX_PREVIEW_FACES, replace=False)
+            )
+            mesh = _trimesh.Trimesh(
+                vertices=mesh.vertices,
+                faces=mesh.faces[keep],
+                process=False,
+            )
             log.info(
-                f"SegviGen renderer: decimated {orig_faces} → {len(mesh.faces)} faces "
+                f"SegviGen renderer: subsampled {orig_faces} → {len(mesh.faces)} faces "
                 f"for preview (limit={_MAX_PREVIEW_FACES})"
             )
         except Exception as e:
-            log.warning(f"SegviGen renderer: decimation failed ({e}), using full mesh")
+            log.warning(f"SegviGen renderer: face subsampling failed ({e}), using full mesh")
 
     # Apply per-face segment colors to mesh
     colored_mesh = _apply_label_colors(mesh, labels)
 
-    # Try nvdiffrast first, fall back to trimesh software renderer.
-    # Catch NotImplementedError too — _render_nvdiffrast raises it until implemented.
+    # Try renderers in order: nvdiffrast → trimesh/pyglet → matplotlib → PIL painter.
+    # Each is a hard fallback; the PIL painter requires only Pillow + numpy (always
+    # available in ComfyUI) so the chain always terminates with valid images.
+    frames = None
     try:
         frames = _render_nvdiffrast(colored_mesh, num_views, resolution)
     except (ImportError, NotImplementedError):
-        log.warning("SegviGen: nvdiffrast not available / not yet implemented, using trimesh fallback")
-        frames = _render_trimesh_software(colored_mesh, num_views, resolution)
+        pass
+
+    if frames is None:
+        try:
+            frames = _render_trimesh_software(colored_mesh, num_views, resolution)
+        except Exception as e:
+            log.warning("SegviGen: trimesh renderer failed (%s), using PIL painter", e)
+
+    if frames is None:
+        frames = _render_pil_painter(colored_mesh, num_views, resolution)
 
     # Stack into [num_views, H, W, 3] float32
     frames_np = np.stack([np.array(f) for f in frames], axis=0)
@@ -130,10 +151,15 @@ def _apply_label_colors(mesh, labels):
     return colored
 
 
-def _render_trimesh_software(mesh, num_views: int, resolution: int) -> list:
-    """Software renderer fallback using trimesh's scene.save_image (pyglet)."""
+def _render_trimesh_software(mesh, num_views: int, resolution: int):
+    """
+    Software renderer using trimesh's scene.save_image (requires pyglet).
+    Returns a list of PIL Images, or raises an exception if pyglet is absent.
+    """
     import trimesh
     import math
+    import io
+    from PIL import Image
 
     scene = trimesh.Scene([mesh])
     bounds = mesh.bounds
@@ -149,82 +175,100 @@ def _render_trimesh_software(mesh, num_views: int, resolution: int) -> list:
             distance * 0.3,
             distance * math.cos(angle),
         ])
-        try:
-            scene.set_camera(eye, center)
-            png = scene.save_image(resolution=(resolution, resolution))
-            from PIL import Image
-            import io
-            frames.append(Image.open(io.BytesIO(png)).convert("RGB"))
-        except Exception as e:
-            if not frames:
-                # First frame failed — pyglet/GL context issue, use matplotlib fallback
-                log.warning("SegviGen: trimesh save_image failed (%s), using matplotlib fallback", e)
-                return _render_matplotlib_fallback(mesh, num_views, resolution)
-            # Later frame failed — fill with last successful frame
-            frames.append(frames[-1].copy())
+        scene.set_camera(eye, center)
+        png = scene.save_image(resolution=(resolution, resolution))
+        frames.append(Image.open(io.BytesIO(png)).convert("RGB"))
 
+    log.info("SegviGen: trimesh/pyglet renderer succeeded")
     return frames
 
 
-def _render_matplotlib_fallback(mesh, num_views: int, resolution: int) -> list:
-    """Matplotlib 3D renderer — produces clean square images with correct aspect ratio."""
+def _render_pil_painter(mesh, num_views: int, resolution: int) -> list:
+    """
+    Pure PIL + numpy painter's-algorithm renderer.
+
+    Rotates the mesh around the Y-axis, projects orthographically,
+    sorts faces back-to-front by centroid Z, and draws filled triangles
+    with PIL.ImageDraw.  Requires only Pillow + numpy — always available
+    in ComfyUI.
+    """
     import math
-    import io
-    from PIL import Image
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    from PIL import Image, ImageDraw
 
-    verts = mesh.vertices
+    verts = mesh.vertices.astype(np.float64)
     faces = mesh.faces
-    bounds = mesh.bounds
-    center = (bounds[0] + bounds[1]) / 2.0
-    # Use uniform extent on all axes so the mesh isn't distorted
-    half_extent = float((bounds[1] - bounds[0]).max()) / 2.0 * 1.15
 
-    # Build face polygons with colors
-    face_verts = verts[faces]
-    fc = None
+    # Per-face colors: fall back to gray if visual has no face_colors
     if hasattr(mesh.visual, "face_colors") and mesh.visual.face_colors is not None:
-        fc = mesh.visual.face_colors[:, :3].astype(np.float32) / 255.0
+        fc_rgba = np.asarray(mesh.visual.face_colors, dtype=np.uint8)
+        if fc_rgba.shape[1] >= 3:
+            face_rgb = fc_rgba[:, :3]
+        else:
+            face_rgb = np.full((len(faces), 3), 180, dtype=np.uint8)
+    else:
+        face_rgb = np.full((len(faces), 3), 180, dtype=np.uint8)
 
-    dpi = 100
-    figsize = resolution / dpi
+    # Normalise mesh to [-1, 1] unit cube centred at origin
+    bounds_min = verts.min(axis=0)
+    bounds_max = verts.max(axis=0)
+    center = (bounds_min + bounds_max) * 0.5
+    scale = float((bounds_max - bounds_min).max()) * 0.5
+    if scale < 1e-8:
+        scale = 1.0
+    verts = (verts - center) / scale   # in [-1, 1]
+
+    # Fixed elevation angle  (15°)
+    elev_rad = math.radians(15.0)
+    cos_e, sin_e = math.cos(elev_rad), math.sin(elev_rad)
+    R_elev = np.array([
+        [1,      0,     0],
+        [0,  cos_e, -sin_e],
+        [0,  sin_e,  cos_e],
+    ])
 
     frames = []
+    half = resolution / 2.0
+    margin = 0.85  # fraction of half-resolution used by the mesh
+
     for i in range(num_views):
-        angle_deg = 360.0 * i / num_views
-        fig = plt.figure(figsize=(figsize, figsize), dpi=dpi, facecolor="white")
-        # Fill the entire figure with the 3D axes — no margins
-        ax = fig.add_axes([0, 0, 1, 1], projection="3d")
-        ax.set_facecolor("white")
-        poly = Poly3DCollection(face_verts, linewidths=0.05, edgecolors=(0.4, 0.4, 0.4, 0.15))
-        if fc is not None:
-            poly.set_facecolor(fc)
-        else:
-            poly.set_facecolor((0.7, 0.7, 0.7))
-        ax.add_collection3d(poly)
-        # Uniform axis limits centered on the mesh — prevents squashing
-        ax.set_xlim(center[0] - half_extent, center[0] + half_extent)
-        ax.set_ylim(center[1] - half_extent, center[1] + half_extent)
-        ax.set_zlim(center[2] - half_extent, center[2] + half_extent)
-        # Force equal aspect ratio
-        ax.set_box_aspect([1, 1, 1])
-        ax.view_init(elev=20, azim=angle_deg)
-        ax.axis("off")
-        buf = io.BytesIO()
-        # Use pad_inches=0 but NOT bbox_inches="tight" — this preserves
-        # the exact figsize we specified instead of cropping to content
-        fig.savefig(buf, format="png", dpi=dpi, pad_inches=0)
-        plt.close(fig)
-        buf.seek(0)
-        img = Image.open(buf).convert("RGB")
-        # Should already be resolution×resolution, but ensure it
-        if img.size != (resolution, resolution):
-            img = img.resize((resolution, resolution), Image.LANCZOS)
+        azim_rad = 2.0 * math.pi * i / num_views
+        cos_a, sin_a = math.cos(azim_rad), math.sin(azim_rad)
+
+        # Rotation around Y-axis (azimuth)
+        R_azim = np.array([
+            [ cos_a, 0, sin_a],
+            [     0, 1,     0],
+            [-sin_a, 0, cos_a],
+        ])
+        R = R_elev @ R_azim
+        v = verts @ R.T  # [V, 3] in view space
+
+        # Orthographic projection: x,y → screen; z is depth
+        # Scale so ±1 world-unit → ±half*margin pixels
+        px = (v[:, 0] * half * margin + half).astype(np.float32)
+        py = (-v[:, 1] * half * margin + half).astype(np.float32)  # flip Y
+
+        # Face centroid depths for painter's sort (farthest first)
+        fv_z = v[faces, 2]           # [F, 3]
+        depth = fv_z.mean(axis=1)
+        order = np.argsort(depth)[::-1]
+
+        img = Image.new("RGB", (resolution, resolution), (240, 240, 240))
+        draw = ImageDraw.Draw(img)
+
+        for fi in order:
+            tri = faces[fi]
+            pts = [
+                (float(px[tri[0]]), float(py[tri[0]])),
+                (float(px[tri[1]]), float(py[tri[1]])),
+                (float(px[tri[2]]), float(py[tri[2]])),
+            ]
+            color = tuple(int(c) for c in face_rgb[fi])
+            draw.polygon(pts, fill=color)
+
         frames.append(img)
 
+    log.info("SegviGen: PIL painter renderer succeeded (%d views, %dpx)", num_views, resolution)
     return frames
 
 
