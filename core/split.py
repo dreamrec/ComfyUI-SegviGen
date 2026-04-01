@@ -29,9 +29,7 @@ def split_mesh_by_labels(
 
     Returns:
         List of trimesh.Trimesh objects, one per valid segment.
-
-    Raises:
-        ValueError: if no valid segments remain after filtering.
+        Returns an empty list (never raises) if no segments survive the filter.
     """
     import trimesh
 
@@ -52,10 +50,11 @@ def split_mesh_by_labels(
             parts.append(submesh)
 
     if not parts:
-        raise ValueError(
-            f"No valid segments found (all segments below min_faces={min_faces}). "
-            "Try lowering min_segment_faces or adjusting segmentation parameters."
+        log.info(
+            f"SegviGen split: no valid segments found "
+            f"(all below min_faces={min_faces}). Returning empty list."
         )
+        return []
 
     log.info(f"SegviGen split: {len(parts)} parts extracted from {len(unique_labels)} labels")
     return parts

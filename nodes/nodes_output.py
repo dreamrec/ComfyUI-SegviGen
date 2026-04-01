@@ -110,6 +110,33 @@ class SegviGenExportParts:
         parts_dir = os.path.join(folder_paths.output_directory, "segvigen", timestamp)
         os.makedirs(parts_dir, exist_ok=True)
 
+        # ── No points yet: export the full unsegmented mesh as a preview ──
+        # labels=None means the sampler did a first-run passthrough (no click
+        # points have been set).  Export the whole mesh so Preview3D shows the
+        # new object straight away, giving the user something to click on in
+        # the 3D picker without the workflow crashing.
+        if labels is None:
+            whole_mesh = mesh
+            if hasattr(mesh, 'faces'):
+                n_whole = len(mesh.faces)
+            elif hasattr(mesh, 'dump'):
+                whole_mesh = mesh.dump(concatenate=True)
+                n_whole = len(whole_mesh.faces)
+            else:
+                n_whole = 0
+
+            if n_whole > max_faces:
+                whole_mesh = _simplify(whole_mesh, max_faces)
+
+            combined_filename = f"{filename_prefix}_preview_{timestamp}.glb"
+            combined_path = os.path.join(folder_paths.output_directory, combined_filename)
+            whole_mesh.export(combined_path, file_type="glb")
+            log.info(
+                f"SegviGen: no points yet — exported full mesh preview → {combined_path}. "
+                "Click '🎯 Open 3D Picker', select part(s), then run again."
+            )
+            return (combined_filename, "")
+
         # Convert per-voxel labels to per-face labels
         face_labels = _voxel_labels_to_face_labels(mesh, labels)
         parts = split_mesh_by_labels(mesh, face_labels, min_faces=min_segment_faces)
