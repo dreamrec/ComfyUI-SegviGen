@@ -142,11 +142,22 @@ class SegviGenExportParts:
         parts = split_mesh_by_labels(mesh, face_labels, min_faces=min_segment_faces)
 
         if not parts:
+            # Still export the whole mesh so Preview3D shows something.
+            # This happens when: all predicted segments are below min_segment_faces,
+            # or the label-to-face mapping produced no foreground labels.
             log.info(
-                "SegviGen: no segments to export — mesh is registered in picker. "
-                "Click '🎯 Open 3D Picker', select part(s), then run again."
+                "SegviGen: no valid segments — exporting full mesh as fallback preview. "
+                "Try lowering min_segment_faces, or click more points and run again."
             )
-            return ("", "")
+            fallback = mesh
+            if not hasattr(fallback, 'faces') and hasattr(fallback, 'dump'):
+                fallback = fallback.dump(concatenate=True)
+            if hasattr(fallback, 'faces') and len(fallback.faces) > max_faces:
+                fallback = _simplify(fallback, max_faces)
+            fallback_filename = f"{filename_prefix}_fallback_{timestamp}.glb"
+            fallback_path = os.path.join(folder_paths.output_directory, fallback_filename)
+            fallback.export(fallback_path, file_type="glb")
+            return (fallback_filename, "")
 
         # ── 1. Combined GLB: all parts as named sub-objects in one file ──
         # Saved to the OUTPUT ROOT (no subfolder) so ComfyUI's Preview3D node
@@ -187,7 +198,24 @@ class SegviGenExportParts:
 
 
 def _simplify(mesh, target_faces: int):
-    """Simplify mesh to target face count."""
-    if len(mesh.faces) <= target_faces:
+    """
+    Reduce mesh to at most target_faces using random face subsampling.
+
+    We avoid simplify_quadric_decimation (requires fast_simplification / pyfqmr,
+    NOT installed in the ComfyUI pixi env).  Random subsampling is dependency-free,
+    instant, and sufficient for preview/export where exact topology isn't critical.
+    """
+    import numpy as np
+    import trimesh as _trimesh
+
+    if not hasattr(mesh, 'faces') or len(mesh.faces) <= target_faces:
         return mesh
-    return mesh.simplify_quadric_decimation(face_count=target_faces)
+    orig_faces = len(mesh.faces)
+    keep = np.sort(np.random.choice(orig_faces, target_faces, replace=False))
+    result = _trimesh.Trimesh(
+        vertices=mesh.vertices,
+        faces=mesh.faces[keep],
+        process=False,
+    )
+    log.debug(f"SegviGen export: subsampled {orig_faces} → {len(result.faces)} faces")
+    return result
