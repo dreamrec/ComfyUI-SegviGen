@@ -199,12 +199,23 @@ class SegviGenFullSampler:
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                  "fp32": torch.float32}[dtype_str]
 
+        from core.interactive import Gen3DSegInteractive
+
         log.info(f"SegviGen: loading full flow model from {ckpt_path}")
         flow_model = _load_segvigen_flow_model(model_config, ckpt_path)
 
+        # Wrap in Gen3DSegInteractive for 2N token interleaving.
+        # Full mode passes input_points=None so seg_embeddings are unused,
+        # but the wrapper is needed for the upstream 2N tex_slat interleaving
+        # architecture that SLatFlowModel.forward() alone cannot do.
+        dummy_seg_embed = torch.zeros(1, 1536)
+        gen = Gen3DSegInteractive(flow_model.model, dummy_seg_embed)
+        gen = gen.to(device=device)
+        gen.flow_model.convert_to(dtype)
+        gen.eval()
+
         patcher = comfy.model_patcher.ModelPatcher(
-            flow_model,
-            load_device=device,
+            gen, load_device=device,
             offload_device=mm.unet_offload_device(),
         )
         mm.load_models_gpu([patcher])
@@ -234,8 +245,8 @@ class SegviGenFullSampler:
         # ── Prepare shape_slat + coords ──────────────────────────────────
         slat_latent = get_shape_slat(slat)
         coords = slat_latent.coords
-        noise_ch = flow_model.out_channels
-        cond_ch  = flow_model.in_channels - noise_ch
+        noise_ch = gen.flow_model.out_channels
+        cond_ch  = gen.flow_model.in_channels - noise_ch
 
         noise = _sp.SparseTensor(
             feats=torch.randn(len(coords), noise_ch, device=device, dtype=torch.float32),
@@ -293,7 +304,7 @@ class SegviGenFullSampler:
                  f"rescale={guidance_rescale}, rescale_t={_rescale_t})")
 
         result = sampler_wrapper.sample(
-            flow_model, noise,
+            gen, noise,
             cond=pos_cond,
             neg_cond=neg_cond,
             steps=steps,
