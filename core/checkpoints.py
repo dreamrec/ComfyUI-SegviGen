@@ -22,28 +22,28 @@ CHECKPOINT_MANIFEST: Dict[str, dict] = {
         "hf_repo": "fenghora/SegviGen",
         "filename": "interactive_seg.ckpt",
         "format": "ckpt",
-        "sha256": None,  # TODO: fill when verified
+        "sha256": "11e41fdaa0c03f581c0c44eb8f9b27604c0d5e4d2794cb02b6edff80c23f4dd1",
         "description": "Point-guided interactive binary segmentation",
     },
     "full": {
         "hf_repo": "fenghora/SegviGen",
         "filename": "full_seg.ckpt",
         "format": "ckpt",
-        "sha256": None,
+        "sha256": "c71618e45b1671026da66cf9875cc5c2d41d5a894b01a15ac5b019946e6a207c",
         "description": "Automatic full-mesh part segmentation",
     },
     "full_2d_guided": {
         "hf_repo": "fenghora/SegviGen",
         "filename": "full_seg_w_2d_map.ckpt",
         "format": "ckpt",
-        "sha256": None,
+        "sha256": None,  # not yet downloaded from fenghora
         "description": "2D-map-guided full-mesh segmentation",
     },
     "full_legacy": {
         "hf_repo": "Aero-Ex/SegviGen",
         "filename": "full_seg.safetensors",
         "format": "safetensors",
-        "sha256": None,
+        "sha256": "61508a7dfc163a95d977ac30c1d3f9ac8f258b663ed1fcea67b3a748b3beaa65",
         "description": "Legacy Aero-Ex full segmentation (safetensors)",
     },
 }

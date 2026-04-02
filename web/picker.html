@@ -306,7 +306,7 @@ import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 const params     = new URLSearchParams(window.location.search);
 const meshFile   = params.get('mesh')       || '';
 const meshType   = params.get('meshType')   || 'output';
-const resolution = parseInt(params.get('resolution') || '64', 10);
+const resolution = parseInt(params.get('resolution') || '512', 10);  // canonical 512-space
 const nodeId     = params.get('nodeId')     || '';
 const subfolder  = params.get('subfolder')  || '';
 

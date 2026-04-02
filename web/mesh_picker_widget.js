@@ -125,7 +125,7 @@ app.registerExtension({
         // Persistent state on the node instance.
         node._sgMeshFile   = '';
         node._sgMeshType   = 'output';
-        node._sgResolution = 64;
+        node._sgResolution = 512;  // canonical 512-space
 
         // ── Intercept onExecuted to capture mesh info from Python output ──────
         const _origOnExecuted = node.onExecuted;
