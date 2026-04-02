@@ -47,5 +47,9 @@ This repo is in active recovery toward **upstream SegviGen paper fidelity**. Her
 
 ## Workflows
 
-- `workflows/segvigen_interactive.json` -- Interactive point-guided segmentation (recommended)
-- `workflows/segvigen_image_conditioned.json` -- Full auto-segmentation (experimental)
+| Workflow | Mode | Input path |
+|----------|------|------------|
+| `segvigen_interactive.json` | Interactive point-guided | TRELLIS2 bridge |
+| `segvigen_image_conditioned.json` | Full auto-segmentation | TRELLIS2 bridge |
+| `segvigen_asset_native.json` | Full auto-segmentation | Paper-native (mesh + o_voxel) |
+| `segvigen_2d_guided.json` | 2D-guided full segmentation | TRELLIS2 bridge + label map |

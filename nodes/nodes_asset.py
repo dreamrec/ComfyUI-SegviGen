@@ -38,8 +38,8 @@ class SegviGenAssetPrepare:
                     "tooltip": "Texture map resolution for preprocessing.",
                 }),
                 "voxel_resolution": ("INT", {
-                    "default": 512, "min": 64, "max": 1024,
-                    "tooltip": "Voxel grid resolution for dual-grid conversion.",
+                    "default": 512, "min": 512, "max": 512,
+                    "tooltip": "Paper-native resolution; fixed at 512.",
                 }),
             },
         }
@@ -50,6 +50,12 @@ class SegviGenAssetPrepare:
         from core.contracts import build_segvigen_voxel
 
         check_interrupt()
+
+        if voxel_resolution != 512:
+            raise ValueError(
+                f"SegviGenAssetPrepare: asset-native encoding requires voxel_resolution=512 "
+                f"(got {voxel_resolution}). The upstream paper path is 512-centric."
+            )
 
         vxz_dir = os.path.join(folder_paths.output_directory, "segvigen", "vxz")
         os.makedirs(vxz_dir, exist_ok=True)

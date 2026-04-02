@@ -4,6 +4,8 @@ SegviGen asset-native encoding backend.
 Ports the paper's original process_glb_to_vxz and vxz_to_latent_slat
 pipeline for real mesh-to-latent encoding without the TRELLIS2 bridge.
 """
+import glob
+import importlib.util
 import logging
 import os
 import sys
@@ -20,29 +22,98 @@ _model_cache = {
     "shape_decoder": None,
 }
 
+# Resolved o_voxel path (set once by _ensure_o_voxel_path)
+_o_voxel_resolved_path = None
 
-def _ensure_o_voxel_path():
-    """Add TRELLIS2's o_voxel to sys.path if not already importable."""
-    try:
+
+def _find_o_voxel_spec():
+    """Check if o_voxel is already importable without sys.path changes."""
+    return importlib.util.find_spec("o_voxel")
+
+
+def _candidate_o_voxel_paths(base_path: str) -> list:
+    """
+    Return all candidate directories where o_voxel might live.
+
+    Covers Windows (Lib/site-packages) and Linux (lib/python*/site-packages)
+    TRELLIS2 environment layouts, plus an env var override.
+    """
+    candidates = []
+
+    # 1. Env var override (highest priority)
+    env_path = os.environ.get("SEGVIGEN_O_VOXEL_PATH")
+    if env_path:
+        candidates.append(env_path)
+
+    trellis_root = os.path.join(base_path, "custom_nodes", "ComfyUI-TRELLIS2")
+
+    # 2. Windows layout
+    candidates.append(
+        os.path.join(trellis_root, "_env_trellis2", "Lib", "site-packages")
+    )
+
+    # 3. Linux layout (lib/python3.*/site-packages)
+    linux_pattern = os.path.join(
+        trellis_root, "_env_trellis2", "lib", "python*", "site-packages"
+    )
+    candidates.extend(glob.glob(linux_pattern))
+
+    # 4. TRELLIS2 nodes directory (fallback)
+    candidates.append(os.path.join(trellis_root, "nodes"))
+
+    return candidates
+
+
+def _ensure_o_voxel_path() -> str:
+    """
+    Ensure o_voxel is importable. Returns the resolved directory path.
+
+    Search order:
+    1. Already importable (fast path)
+    2. SEGVIGEN_O_VOXEL_PATH env var
+    3. Windows TRELLIS2 env: _env_trellis2/Lib/site-packages
+    4. Linux TRELLIS2 env: _env_trellis2/lib/python*/site-packages
+    5. TRELLIS2 nodes directory
+
+    Raises ImportError with all checked paths if not found.
+    """
+    global _o_voxel_resolved_path
+    if _o_voxel_resolved_path is not None:
+        return _o_voxel_resolved_path
+
+    # Fast path: already importable
+    if _find_o_voxel_spec() is not None:
         import o_voxel
-        return
+        _o_voxel_resolved_path = os.path.dirname(o_voxel.__file__)
+        return _o_voxel_resolved_path
+
+    # Search candidate paths
+    try:
+        import folder_paths
+        base = folder_paths.base_path
     except ImportError:
-        pass
-    # Search for o_voxel inside TRELLIS2's environment
-    import folder_paths
-    candidates = [
-        os.path.join(folder_paths.base_path, "custom_nodes", "ComfyUI-TRELLIS2", "_env_trellis2", "Lib", "site-packages"),
-        os.path.join(folder_paths.base_path, "custom_nodes", "ComfyUI-TRELLIS2", "nodes"),
-    ]
+        base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+    candidates = _candidate_o_voxel_paths(base)
+    checked = []
+
     for p in candidates:
+        checked.append(p)
         if os.path.isdir(os.path.join(p, "o_voxel")):
             if p not in sys.path:
                 sys.path.insert(0, p)
-                log.info(f"SegviGen: added o_voxel path: {p}")
-            return
+            _o_voxel_resolved_path = os.path.join(p, "o_voxel")
+            log.info(f"SegviGen: found o_voxel at {_o_voxel_resolved_path}")
+            return _o_voxel_resolved_path
+
     raise ImportError(
-        "SegviGen: o_voxel library not found. "
-        "Ensure ComfyUI-TRELLIS2 is installed with its CUDA extensions."
+        "SegviGen: o_voxel library not found.\n"
+        "Checked paths:\n"
+        + "\n".join(f"  - {p}" for p in checked)
+        + "\n\nFixes:\n"
+        "  1. Set SEGVIGEN_O_VOXEL_PATH=/path/to/site-packages\n"
+        "  2. Ensure ComfyUI-TRELLIS2 is installed with CUDA extensions\n"
+        "  3. Install o_voxel: pip install o_voxel"
     )
 
 
@@ -115,6 +186,12 @@ def prepare_asset_to_vxz(
     Returns:
         (vxz_path, normalization_dict)
     """
+    if voxel_resolution != 512:
+        raise ValueError(
+            f"SegviGen: asset-native encoding requires voxel_resolution=512 "
+            f"(got {voxel_resolution}). The paper path is 512-centric."
+        )
+
     import trimesh as _tm
     _ensure_o_voxel_path()
     import o_voxel

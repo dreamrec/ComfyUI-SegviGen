@@ -1,8 +1,8 @@
 {
   "id": "segvigen-asset-native",
-  "revision": 1,
-  "last_node_id": 9,
-  "last_link_id": 10,
+  "revision": 2,
+  "last_node_id": 12,
+  "last_link_id": 15,
   "nodes": [
     {
       "id": 1,
@@ -14,7 +14,7 @@
       "mode": 0,
       "inputs": [],
       "outputs": [
-        {"name": "trimesh", "type": "TRIMESH", "links": [1, 6], "slot_index": 0}
+        {"name": "trimesh", "type": "TRIMESH", "links": [1, 9], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenLoadMesh"},
       "widgets_values": [""]
@@ -28,9 +28,7 @@
       "order": 1,
       "mode": 0,
       "inputs": [
-        {"name": "trimesh", "type": "TRIMESH", "link": 1},
-        {"name": "texture_resolution", "type": "INT", "shape": 7, "widget": {"name": "texture_resolution"}, "link": null},
-        {"name": "voxel_resolution", "type": "INT", "shape": 7, "widget": {"name": "voxel_resolution"}, "link": null}
+        {"name": "trimesh", "type": "TRIMESH", "link": 1}
       ],
       "outputs": [
         {"name": "voxel", "type": "SEGVIGEN_VOXEL", "links": [2], "slot_index": 0}
@@ -47,8 +45,7 @@
       "order": 2,
       "mode": 0,
       "inputs": [
-        {"name": "voxel", "type": "SEGVIGEN_VOXEL", "link": 2},
-        {"name": "seed", "type": "INT", "shape": 7, "widget": {"name": "seed"}, "link": null}
+        {"name": "voxel", "type": "SEGVIGEN_VOXEL", "link": 2}
       ],
       "outputs": [
         {"name": "slat", "type": "SEGVIGEN_SLAT", "links": [3], "slot_index": 0}
@@ -58,34 +55,71 @@
     },
     {
       "id": 4,
-      "type": "LoadTrellis2Models",
+      "type": "LoadImage",
       "pos": [40, 200],
-      "size": [270, 106],
+      "size": [280, 100],
       "flags": {},
       "order": 3,
       "mode": 0,
       "inputs": [],
       "outputs": [
-        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "links": [4, 5], "slot_index": 0}
+        {"name": "IMAGE", "type": "IMAGE", "links": [4], "slot_index": 0},
+        {"name": "MASK",  "type": "MASK",  "links": null, "slot_index": 1}
+      ],
+      "properties": {"cnr_id": "comfy-core", "Node name for S&R": "LoadImage"},
+      "widgets_values": ["reference_photo.png", "image"],
+      "title": "Load Reference Photo"
+    },
+    {
+      "id": 5,
+      "type": "SegviGenPreprocess",
+      "pos": [380, 200],
+      "size": [220, 60],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 4}
+      ],
+      "outputs": [
+        {"name": "image", "type": "IMAGE", "links": [5], "slot_index": 0},
+        {"name": "mask",  "type": "MASK",  "links": [6], "slot_index": 1}
+      ],
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenPreprocess"},
+      "widgets_values": ["black"]
+    },
+    {
+      "id": 10,
+      "type": "LoadTrellis2Models",
+      "pos": [40, 340],
+      "size": [270, 106],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "links": [7, 8], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-TRELLIS2", "Node name for S&R": "LoadTrellis2Models"},
       "widgets_values": ["512", "auto", "auto"]
     },
     {
-      "id": 5,
-      "type": "SegviGenNullConditioning",
-      "pos": [380, 200],
-      "size": [280, 60],
+      "id": 11,
+      "type": "SegviGenGetConditioning",
+      "pos": [660, 200],
+      "size": [310, 100],
       "flags": {},
-      "order": 4,
+      "order": 6,
       "mode": 0,
       "inputs": [
-        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 4}
+        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "link": 7},
+        {"name": "image",        "type": "IMAGE",                 "link": 5},
+        {"name": "mask",         "type": "MASK",                  "link": 6}
       ],
       "outputs": [
-        {"name": "conditioning", "type": "SEGVIGEN_COND", "links": [7], "slot_index": 0}
+        {"name": "conditioning", "type": "SEGVIGEN_COND", "links": [10], "slot_index": 0}
       ],
-      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenNullConditioning"}
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenGetConditioning"}
     },
     {
       "id": 6,
@@ -93,22 +127,16 @@
       "pos": [1080, 40],
       "size": [340, 260],
       "flags": {},
-      "order": 5,
+      "order": 7,
       "mode": 0,
       "inputs": [
-        {"name": "model_config",            "type": "TRELLIS2_MODEL_CONFIG", "link": 5},
+        {"name": "model_config",            "type": "TRELLIS2_MODEL_CONFIG", "link": 8},
         {"name": "slat",                    "type": "SEGVIGEN_SLAT",         "link": 3},
-        {"name": "conditioning",            "type": "SEGVIGEN_COND",         "link": 7},
-        {"name": "trimesh",                 "type": "TRIMESH",               "link": 6, "shape": 7},
-        {"name": "seed",                    "type": "INT",   "shape": 7, "widget": {"name": "seed"},                    "link": null},
-        {"name": "steps",                   "type": "INT",   "shape": 7, "widget": {"name": "steps"},                   "link": null},
-        {"name": "guidance_strength",       "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_strength"},       "link": null},
-        {"name": "guidance_rescale",        "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_rescale"},        "link": null},
-        {"name": "guidance_interval_start", "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_interval_start"}, "link": null},
-        {"name": "guidance_interval_end",   "type": "FLOAT", "shape": 7, "widget": {"name": "guidance_interval_end"},   "link": null}
+        {"name": "conditioning",            "type": "SEGVIGEN_COND",         "link": 10},
+        {"name": "trimesh",                 "type": "TRIMESH",               "link": 9, "shape": 7}
       ],
       "outputs": [
-        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "links": [8, 9], "slot_index": 0}
+        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "links": [11, 12], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenFullSampler"},
       "widgets_values": [0, "fixed", 12, 7.5, 0.0, 0.6, 0.9]
@@ -119,10 +147,10 @@
       "pos": [1480, 40],
       "size": [320, 150],
       "flags": {},
-      "order": 6,
+      "order": 8,
       "mode": 0,
       "inputs": [
-        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "link": 8}
+        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "link": 11}
       ],
       "outputs": [
         {"name": "combined_file",    "type": "STRING", "links": null, "slot_index": 0},
@@ -137,13 +165,13 @@
       "pos": [1480, 250],
       "size": [260, 110],
       "flags": {},
-      "order": 7,
+      "order": 9,
       "mode": 0,
       "inputs": [
-        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "link": 9}
+        {"name": "seg_result", "type": "SEGVIGEN_SEG_RESULT", "link": 12}
       ],
       "outputs": [
-        {"name": "preview_images", "type": "IMAGE", "links": [10], "slot_index": 0}
+        {"name": "preview_images", "type": "IMAGE", "links": [13], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenRenderPreview"},
       "widgets_values": [8, 512]
@@ -154,42 +182,49 @@
       "pos": [1800, 250],
       "size": [260, 260],
       "flags": {},
-      "order": 8,
+      "order": 10,
       "mode": 0,
       "inputs": [
-        {"name": "images", "type": "IMAGE", "link": 10}
+        {"name": "images", "type": "IMAGE", "link": 13}
       ],
       "outputs": [],
       "properties": {"cnr_id": "comfy-core", "Node name for S&R": "PreviewImage"}
     }
   ],
   "links": [
-    [1, 1, 0, 2, 0, "TRIMESH"],
-    [2, 2, 0, 3, 0, "SEGVIGEN_VOXEL"],
-    [3, 3, 0, 6, 1, "SEGVIGEN_SLAT"],
-    [4, 4, 0, 5, 0, "TRELLIS2_MODEL_CONFIG"],
-    [5, 4, 0, 6, 0, "TRELLIS2_MODEL_CONFIG"],
-    [6, 1, 0, 6, 3, "TRIMESH"],
-    [7, 5, 0, 6, 2, "SEGVIGEN_COND"],
-    [8, 6, 0, 7, 0, "SEGVIGEN_SEG_RESULT"],
-    [9, 6, 0, 8, 0, "SEGVIGEN_SEG_RESULT"],
-    [10, 8, 0, 9, 0, "IMAGE"]
+    [1,  1, 0,  2, 0, "TRIMESH"],
+    [2,  2, 0,  3, 0, "SEGVIGEN_VOXEL"],
+    [3,  3, 0,  6, 1, "SEGVIGEN_SLAT"],
+    [4,  4, 0,  5, 0, "IMAGE"],
+    [5,  5, 0, 11, 1, "IMAGE"],
+    [6,  5, 1, 11, 2, "MASK"],
+    [7, 10, 0, 11, 0, "TRELLIS2_MODEL_CONFIG"],
+    [8, 10, 0,  6, 0, "TRELLIS2_MODEL_CONFIG"],
+    [9,  1, 0,  6, 3, "TRIMESH"],
+    [10,11, 0,  6, 2, "SEGVIGEN_COND"],
+    [11, 6, 0,  7, 0, "SEGVIGEN_SEG_RESULT"],
+    [12, 6, 0,  8, 0, "SEGVIGEN_SEG_RESULT"],
+    [13, 8, 0,  9, 0, "IMAGE"]
   ],
   "groups": [
     {"title": "1. Load Mesh + Asset Encode (paper-native)", "bounding": [20, 10, 1030, 160], "color": "#3d6b44", "font_size": 14},
-    {"title": "2. Full Segmentation + Export", "bounding": [1060, 10, 760, 310], "color": "#7e4a4a", "font_size": 14}
+    {"title": "2. Reference Photo + Image Conditioning", "bounding": [20, 170, 960, 300], "color": "#3f789e", "font_size": 14},
+    {"title": "3. Full Segmentation + Export", "bounding": [1060, 10, 760, 310], "color": "#7e4a4a", "font_size": 14}
   ],
   "extra": {
-    "ds": {"scale": 0.5, "offset": [0, 0]},
+    "ds": {"scale": 0.45, "offset": [0, 0]},
     "_note": [
-      "SegviGen Asset-Native Full Segmentation (v1)",
+      "SegviGen Asset-Native Full Segmentation (v2 — paper-faithful)",
       "",
-      "This is the paper's original pipeline — no TRELLIS2 image-to-shape needed.",
+      "The paper's original pipeline with real image conditioning.",
       "1. Load a textured GLB/OBJ mesh",
       "2. SegviGenAssetPrepare: normalize, preprocess textures, voxelize to .vxz",
       "3. SegviGenAssetEncode: shape_enc + tex_enc + shape_dec -> real SLAT",
-      "4. SegviGenFullSampler: auto part segmentation with paper-faithful encoding",
-      "5. Export segmented parts"
+      "4. Load a reference photo of the same object for DINOv3 conditioning",
+      "5. SegviGenPreprocess removes background",
+      "6. SegviGenGetConditioning extracts image features",
+      "7. SegviGenFullSampler: image-conditioned full segmentation",
+      "8. Export segmented parts"
     ]
   },
   "version": 0.4

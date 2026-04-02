@@ -177,8 +177,8 @@ class SegviGenFullSampler:
         from trellis2.modules import sparse as _sp
         from core.sampler import SegviGenFlowSampler
         from core.contracts import (
-            build_segvigen_seg_result, MODE_FULL, SOURCE_SHAPE_ONLY,
-            get_shape_slat,
+            build_segvigen_seg_result, MODE_FULL, MODE_FULL_2D_GUIDED,
+            SOURCE_SHAPE_ONLY, TASK_FULL_2D_GUIDED, get_shape_slat,
         )
 
         check_interrupt()
@@ -331,9 +331,13 @@ class SegviGenFullSampler:
         coords_np = seg_latent.coords[:, 1:].cpu().numpy().astype(np.int32)
         subs = slat.get("subs")
 
+        is_guided = task_mode == TASK_FULL_2D_GUIDED
+        decode_mode = "full_2d_guided" if is_guided else "full"
+        result_mode = MODE_FULL_2D_GUIDED if is_guided else MODE_FULL
+
         labels, labels_source, decoded_voxels = decode_seg_result(
             seg_latent, subs, coords_np, vr,
-            mode="full",
+            mode=decode_mode,
             grid_resolution=min(vr, 64),
         )
 
@@ -343,7 +347,7 @@ class SegviGenFullSampler:
             decoded_tex_voxels=decoded_voxels,
             labels=labels,
             labels_source=labels_source,
-            mode=MODE_FULL,
+            mode=result_mode,
             mesh=trimesh,
             voxel=slat.get("voxel"),
             source=slat.get("source"),
