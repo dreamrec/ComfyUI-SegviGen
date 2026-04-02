@@ -110,10 +110,12 @@ class SegviGenGLBtoVoxel:
             )
             voxel_resolution = safe
 
+        from core.contracts import build_segvigen_voxel
+
         log.info(f"SegviGen: converting mesh to {voxel_resolution}³ voxel grid")
-        voxel = mesh_to_voxel_grid(source, resolution=voxel_resolution,
-                                    simplify_faces=simplify_faces)
-        voxel["resolution"] = voxel_resolution
+        raw_voxel = mesh_to_voxel_grid(source, resolution=voxel_resolution,
+                                        simplify_faces=simplify_faces)
+        voxel = build_segvigen_voxel(raw_voxel["grid"], resolution=voxel_resolution)
 
         # Load/ensure TRIMESH output for downstream sampler nodes
         if mesh_obj is None:

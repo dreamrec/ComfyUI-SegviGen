@@ -37,12 +37,6 @@ def _get_models_dir() -> str:
     return _SEGVIGEN_MODELS_DIR
 
 
-def _get_checkpoint_path() -> str:
-    """Return path to the SegviGen checkpoint, downloading if needed."""
-    from install import ensure_checkpoint
-    return ensure_checkpoint(_get_models_dir())
-
-
 def _load_segvigen_flow_model(model_config: dict, ckpt_path: str):
     """
     Load SegviGen's SLatFlowModel from checkpoint and wrap it for ComfyUI.

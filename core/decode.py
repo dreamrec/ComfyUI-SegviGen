@@ -64,7 +64,7 @@ def denormalize_tex_slat(seg_latent, pipeline_json_path=None):
         if os.path.isfile(pipeline_json_path):
             with open(pipeline_json_path, "r") as f:
                 pcfg = json.load(f)
-            norm_stats = pcfg.get("tex_slat_normalization")
+            norm_stats = pcfg.get("args", {}).get("tex_slat_normalization")
         else:
             log.warning(
                 "SegviGen decode: pipeline.json not found at %s",

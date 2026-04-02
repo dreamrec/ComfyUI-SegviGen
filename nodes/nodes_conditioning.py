@@ -76,9 +76,14 @@ class SegviGenGetConditioning:
             background_color="black",
         )
 
+        from core.contracts import build_segvigen_cond
+
         mm.soft_empty_cache()
 
-        return (cond,)
+        return (build_segvigen_cond(
+            cond["cond_512"], cond["neg_cond"],
+            cond_1024=cond.get("cond_1024"),
+        ),)
 
 
 class SegviGenNullConditioning:
@@ -138,15 +143,14 @@ class SegviGenNullConditioning:
             background_color="black",
         )
 
+        from core.contracts import build_segvigen_cond
+
         # Use neg_cond as both branches so CFG cancels to zero.
         null_embed = cond_dict["neg_cond"]
-        null_cond = {
-            "cond_512":  null_embed,
-            "neg_cond":  null_embed,
-        }
-        if include_1024:
-            null_cond["cond_1024"] = null_embed
 
         mm.soft_empty_cache()
 
-        return (null_cond,)
+        return (build_segvigen_cond(
+            null_embed, null_embed,
+            cond_1024=null_embed if include_1024 else None,
+        ),)
