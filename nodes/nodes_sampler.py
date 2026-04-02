@@ -191,8 +191,15 @@ class SegviGenFullSampler:
             )
 
         # ── Load checkpoint via core/checkpoints ─────────────────────────
+        # Switch checkpoint based on conditioning task_mode
         from core.checkpoints import resolve_checkpoint
-        ckpt_path = resolve_checkpoint("full")
+        from core.contracts import TASK_FULL_2D_GUIDED
+        task_mode = conditioning.get("task_mode", "standard")
+        if task_mode == TASK_FULL_2D_GUIDED:
+            ckpt_path = resolve_checkpoint("full_2d_guided")
+            log.info("SegviGen full: using 2D-guided checkpoint (full_seg_w_2d_map.ckpt)")
+        else:
+            ckpt_path = resolve_checkpoint("full")
 
         device = mm.get_torch_device()
         dtype_str = model_config.get("dtype", "fp16")
@@ -573,11 +580,37 @@ class SegviGenInteractiveSampler:
             )
             log.info("SegviGen: using zero tex_proxy (no real tex_slat available)")
 
-        # ── Pack all points into single input_points dict ────────────────
-        input_pts = pack_point_tokens(
-            points, voxel_resolution, device=str(device),
-            slat_coords=coords,  # snap clicks to nearest SLAT coordinates
-        )
+        # ── Map points to model coordinates ──────────────────────────────
+        from core.contracts import SOURCE_ASSET_FULL
+        if slat.get("source") == SOURCE_ASSET_FULL:
+            # Asset-native: use tex_encoder for paper-faithful mapping
+            try:
+                from core.asset_encode import map_points_via_tex_encoder
+                mapped_coords = map_points_via_tex_encoder(
+                    points, coords, device=str(device),
+                )
+                # Build input_points from encoder-derived coords
+                MAX = 10
+                n = min(len(mapped_coords), MAX)
+                pt_coords = torch.zeros(MAX, 4, dtype=torch.int32, device=device)
+                pt_labels = torch.zeros(MAX, 1, dtype=torch.int32, device=device)
+                pt_coords[:n] = mapped_coords[:n].to(dtype=torch.int32)
+                pt_labels[:n] = 1
+                input_pts = {'coords': pt_coords, 'labels': pt_labels}
+                log.info(f"SegviGen: mapped {len(points)} points via tex_encoder")
+            except Exception as e:
+                log.warning(f"SegviGen: tex_encoder mapping failed ({e}); "
+                            "falling back to nearest-neighbor snap")
+                input_pts = pack_point_tokens(
+                    points, voxel_resolution, device=str(device),
+                    slat_coords=coords,
+                )
+        else:
+            # Bridge mode: snap to nearest occupied SLAT coordinate
+            input_pts = pack_point_tokens(
+                points, voxel_resolution, device=str(device),
+                slat_coords=coords,
+            )
         log.info(f"SegviGen interactive: {len(points)} points packed, "
                  f"{steps} steps, cfg={guidance_strength}")
 

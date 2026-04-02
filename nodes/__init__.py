@@ -44,11 +44,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SegviGenPreprocess": "SegviGen: Image Preprocessing",
     # ── Encoding ─────────────────────────────────────────────────────
     "SegviGenVoxelEncode": "SegviGen: Encode (shape + tex)",
-    "SegviGenAssetPrepare": "SegviGen: Asset Prepare (coming soon)",
-    "SegviGenAssetEncode": "SegviGen: Asset Encode (coming soon)",
+    "SegviGenAssetPrepare": "SegviGen: Asset Prepare (paper-native)",
+    "SegviGenAssetEncode": "SegviGen: Asset Encode (paper-native)",
     # ── Conditioning ─────────────────────────────────────────────────
     "SegviGenGetConditioning": "SegviGen: Conditioner",
-    "SegviGenGet2DMapConditioning": "SegviGen: 2D Map Conditioning (coming soon)",
+    "SegviGenGet2DMapConditioning": "SegviGen: 2D Map Conditioning",
     # ── Sampling ─────────────────────────────────────────────────────
     "SegviGenFullSampler": "SegviGen: Full Sampling",
     "SegviGenInteractiveSampler": "SegviGen: Interactive Sampler",

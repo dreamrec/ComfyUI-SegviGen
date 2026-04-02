@@ -10,10 +10,10 @@ This repo is in active recovery toward **upstream SegviGen paper fidelity**. Her
 |------|--------|-------|
 | **Interactive segmentation (bridge)** | Production | Uses real `tex_slat` via TRELLIS2 bridge, packed multi-click, decoded binary labels |
 | **Full auto-segmentation** | Bridge-faithful | Real `tex_slat`, 2N interleaving via Gen3DSegInteractive, decoded color-cluster labels (K-means fallback when decode unavailable) |
-| **Asset-native encoding** | Not started | The paper's `process_glb_to_vxz` pipeline is not yet implemented |
-| **2D-guided full segmentation** | Not started | Requires `full_seg_w_2d_map.ckpt` and dedicated conditioning node |
+| **Asset-native encoding** | Paper-native | Full `process_glb_to_vxz` + `vxz_to_latent_slat` pipeline via o_voxel + TRELLIS2 encoders. Requires o_voxel CUDA extensions |
+| **2D-guided full segmentation** | Implemented | Palette-safe conditioning from 2D label maps, auto-switches to `full_seg_w_2d_map.ckpt` |
 
-**Architecture:** The repo currently supports one input path (TRELLIS2 image-to-shape bridge) with plans for a second (asset-native mesh encoding). Both converge into the same sampler and export pipeline. See `docs/superpowers/plans/2026-04-02-upstream-faithful-development-roadmap.md` for the full plan.
+**Architecture:** The repo supports two input paths — **TRELLIS2 bridge** (image → shape → bridge tex_slat) and **asset-native** (mesh → o_voxel → native encoders). Both converge into the same sampler and export pipeline. A third mode, **2D-guided full segmentation**, uses a different checkpoint selected automatically from the conditioning task_mode.
 
 **Checkpoints:** All faithful modes use `fenghora/SegviGen` — interactive_seg.ckpt (interactive), full_seg.ckpt (full auto), full_seg_w_2d_map.ckpt (2D-guided). The legacy Aero-Ex/SegviGen safetensors checkpoint is supported as a fallback only. All checkpoint sha256 hashes are verified at download time.
 

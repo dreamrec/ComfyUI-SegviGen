@@ -8,12 +8,14 @@ versioning across all paths (bridge, asset-native, legacy).
 
 Contract version history:
   v3 (2026-04-02): initial freeze — source enum, labels_source, mode tags
+  v4 (2026-04-02): asset-native + 2D-guided — VOXEL gains vxz_path/normalization,
+                    COND gains task_mode/palette, SLAT source gains asset_full
 """
 import logging
 
 log = logging.getLogger("segvigen")
 
-SEGVIGEN_CONTRACT_VERSION = 3
+SEGVIGEN_CONTRACT_VERSION = 4
 
 # ── Source enum values ────────────────────────────────────────────────────────
 SOURCE_SHAPE_ONLY = "shape_only"
@@ -177,11 +179,20 @@ def build_segvigen_seg_result(
 # SEGVIGEN_COND
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ── Task mode enum values ─────────────────────────────────────────────────
+TASK_STANDARD = "standard"
+TASK_FULL_2D_GUIDED = "full_2d_guided"
+_VALID_TASK_MODES = {TASK_STANDARD, TASK_FULL_2D_GUIDED}
+
+
 def build_segvigen_cond(
     cond_512,
     neg_cond,
     *,
     cond_1024=None,
+    task_mode: str = TASK_STANDARD,
+    preserve_palette: bool = False,
+    palette: list = None,
 ):
     """
     Construct a SEGVIGEN_COND payload.
@@ -190,17 +201,28 @@ def build_segvigen_cond(
         cond_512: torch.Tensor — DINOv3 512-pipeline conditioning
         neg_cond: torch.Tensor — negative/null conditioning
         cond_1024: torch.Tensor or None — 1024-pipeline conditioning
+        task_mode: 'standard' or 'full_2d_guided'
+        preserve_palette: whether to preserve input color palette (2D-guided)
+        palette: list of RGB tuples from the guide map (2D-guided)
 
     Returns:
         dict — SEGVIGEN_COND payload
     """
+    if task_mode not in _VALID_TASK_MODES:
+        raise ValueError(f"SegviGen contracts: invalid task_mode '{task_mode}', "
+                         f"expected one of {_VALID_TASK_MODES}")
+
     result = {
         "segvigen_contract_version": SEGVIGEN_CONTRACT_VERSION,
         "cond_512": cond_512,
         "neg_cond": neg_cond,
+        "task_mode": task_mode,
     }
     if cond_1024 is not None:
         result["cond_1024"] = cond_1024
+    if preserve_palette:
+        result["preserve_palette"] = True
+        result["palette"] = palette
     return result
 
 
@@ -209,18 +231,25 @@ def build_segvigen_cond(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_segvigen_voxel(
-    grid,
+    grid=None,
     *,
-    resolution: int,
-    transform: dict = None,
+    resolution: int = 512,
+    vxz_path: str = None,
+    normalization: dict = None,
+    mesh_meta: dict = None,
 ):
     """
     Construct a SEGVIGEN_VOXEL payload.
 
+    For asset-native path: vxz_path is set, grid is optional preview.
+    For legacy occupancy path: grid is set, vxz_path is None.
+
     Args:
-        grid: np.ndarray bool [R,R,R] — occupancy grid
-        resolution: int — grid side length
-        transform: optional normalization transform metadata
+        grid: np.ndarray bool [R,R,R] — occupancy grid (optional for asset path)
+        resolution: int — voxel grid resolution (default 512)
+        vxz_path: str — path to .vxz file (asset-native path)
+        normalization: dict with center, scale, aabb (asset-native path)
+        mesh_meta: dict with original mesh metadata
 
     Returns:
         dict — SEGVIGEN_VOXEL payload
@@ -229,5 +258,7 @@ def build_segvigen_voxel(
         "segvigen_contract_version": SEGVIGEN_CONTRACT_VERSION,
         "grid": grid,
         "resolution": resolution,
-        "transform": transform,
+        "vxz_path": vxz_path,
+        "normalization": normalization,
+        "mesh_meta": mesh_meta,
     }

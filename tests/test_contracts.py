@@ -116,10 +116,38 @@ def test_build_segvigen_cond_no_1024():
     assert "cond_1024" not in cond
 
 
-def test_build_segvigen_voxel():
+def test_build_segvigen_voxel_legacy():
     from core.contracts import build_segvigen_voxel, SEGVIGEN_CONTRACT_VERSION
     grid = np.zeros((32, 32, 32), dtype=bool)
     voxel = build_segvigen_voxel(grid, resolution=32)
     assert voxel["segvigen_contract_version"] == SEGVIGEN_CONTRACT_VERSION
     assert voxel["resolution"] == 32
     assert voxel["grid"] is grid
+    assert voxel["vxz_path"] is None
+
+
+def test_build_segvigen_voxel_asset_native():
+    from core.contracts import build_segvigen_voxel
+    voxel = build_segvigen_voxel(
+        resolution=512,
+        vxz_path="/tmp/test.vxz",
+        normalization={"center": [0, 0, 0], "scale": 1.0, "aabb": [[-0.5]*3, [0.5]*3]},
+    )
+    assert voxel["vxz_path"] == "/tmp/test.vxz"
+    assert voxel["normalization"]["scale"] == 1.0
+    assert voxel["grid"] is None
+
+
+def test_build_segvigen_cond_with_task_mode():
+    from core.contracts import build_segvigen_cond, TASK_FULL_2D_GUIDED
+    cond = build_segvigen_cond("c512", "neg", task_mode=TASK_FULL_2D_GUIDED,
+                                preserve_palette=True, palette=[(255, 0, 0)])
+    assert cond["task_mode"] == "full_2d_guided"
+    assert cond["preserve_palette"] is True
+    assert cond["palette"] == [(255, 0, 0)]
+
+
+def test_build_segvigen_cond_invalid_task_mode():
+    from core.contracts import build_segvigen_cond
+    with pytest.raises(ValueError, match="invalid task_mode"):
+        build_segvigen_cond("c512", "neg", task_mode="bogus")
