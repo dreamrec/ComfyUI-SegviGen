@@ -53,8 +53,8 @@ def _load_segvigen_flow_model(model_config: dict, ckpt_path: str):
 
 def _get_interactive_checkpoint_path() -> str:
     """Return path to the interactive SegviGen checkpoint, downloading if needed."""
-    from install import ensure_interactive_checkpoint
-    return ensure_interactive_checkpoint(_get_models_dir())
+    from core.checkpoints import resolve_checkpoint
+    return resolve_checkpoint("interactive_binary")
 
 
 def _load_interactive_checkpoint(model_config: dict, ckpt_path: str):
@@ -145,20 +145,35 @@ class SegviGenFullSampler:
         guidance_interval_end: float = 0.9,
     ):
         import torch
+        import numpy as np
         import comfy.model_management as mm
         import comfy.model_patcher
-        from trellis2.samplers import FlowEulerGuidanceIntervalSampler
-        from trellis2.modules import sparse as _sp  # internal SparseTensor recognised by model
+        from trellis2.modules import sparse as _sp
+        from core.sampler import SegviGenFlowSampler
+        from core.contracts import (
+            build_segvigen_seg_result, MODE_FULL, SOURCE_SHAPE_ONLY,
+            get_shape_slat,
+        )
 
         check_interrupt()
-        pb = make_progress(steps)
 
-        ckpt_path = _get_checkpoint_path()
+        # ── Source guard: full mode requires real tex_slat ────────────────
+        if slat.get("source") == SOURCE_SHAPE_ONLY:
+            log.warning(
+                "SegviGen: Full sampler received source='shape_only' (no tex_slat). "
+                "Quality will be degraded. Use SegviGenVoxelEncode with conditioning."
+            )
+
+        # ── Load checkpoint via core/checkpoints ─────────────────────────
+        from core.checkpoints import resolve_checkpoint
+        ckpt_path = resolve_checkpoint("full")
+
         device = mm.get_torch_device()
         dtype_str = model_config.get("dtype", "fp16")
-        dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[dtype_str]
+        dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
+                 "fp32": torch.float32}[dtype_str]
 
-        log.info(f"SegviGen: loading flow model from {ckpt_path}")
+        log.info(f"SegviGen: loading full flow model from {ckpt_path}")
         flow_model = _load_segvigen_flow_model(model_config, ckpt_path)
 
         patcher = comfy.model_patcher.ModelPatcher(
@@ -170,77 +185,103 @@ class SegviGenFullSampler:
 
         torch.manual_seed(seed)
 
-        # ── Load normalization stats ──────────────────────────────────────
+        # ── Load normalization stats + rescale_t ─────────────────────────
         import json
         import folder_paths as _fp
         _pipeline_json = os.path.join(_fp.models_dir, "trellis2", "pipeline.json")
-        _shape_mean = _shape_std = None
+        _shape_mean = _shape_std = _tex_mean = _tex_std = None
+        _rescale_t = 1.0
         if os.path.isfile(_pipeline_json):
             with open(_pipeline_json) as _f:
                 _pcfg = json.load(_f).get("args", {})
             _sn = _pcfg.get("shape_slat_normalization", {})
+            _tn = _pcfg.get("tex_slat_normalization", {})
             if _sn.get("mean") and _sn.get("std"):
                 _shape_mean = torch.tensor(_sn["mean"], device=device, dtype=torch.float32)
                 _shape_std  = torch.tensor(_sn["std"],  device=device, dtype=torch.float32)
+            if _tn.get("mean") and _tn.get("std"):
+                _tex_mean = torch.tensor(_tn["mean"], device=device, dtype=torch.float32)
+                _tex_std  = torch.tensor(_tn["std"],  device=device, dtype=torch.float32)
+            _rescale_t = float(_pcfg.get("rescale_t", 1.0))
+            log.info(f"SegviGen full: loaded normalization stats (rescale_t={_rescale_t})")
 
-        slat_latent = slat["latent"]
+        # ── Prepare shape_slat + coords ──────────────────────────────────
+        slat_latent = get_shape_slat(slat)
         coords = slat_latent.coords
         noise_ch = flow_model.out_channels
-        cond_ch  = flow_model.in_channels - flow_model.out_channels
+        cond_ch  = flow_model.in_channels - noise_ch
 
         noise = _sp.SparseTensor(
             feats=torch.randn(len(coords), noise_ch, device=device, dtype=torch.float32),
             coords=coords,
         )
 
-        # Normalise shape_slat for concat_cond
+        # ── Normalise shape_slat for concat_cond ─────────────────────────
         raw_feats = slat_latent.feats.to(device=device, dtype=torch.float32)
         if _shape_mean is not None and cond_ch > 0:
             normed_feats = (raw_feats - _shape_mean) / _shape_std
         else:
             normed_feats = raw_feats
-        concat_cond = _sp.SparseTensor(
-            feats=normed_feats, coords=coords
+        shape_cond = _sp.SparseTensor(
+            feats=normed_feats, coords=coords,
         ) if cond_ch > 0 else None
 
-        # tex_proxy: zeros at same coords (2N interleaving for FullSampler
-        # uses ComfyCompatFlowModel which doesn't implement 2N — pass None)
-        # The FullSampler wraps the bare SLatFlowModel (not Gen3DSegInteractive),
-        # so we keep the existing N-token path for it.
+        # ── tex_slat: use real if available, else zero proxy ─────────────
+        tex_slat_raw = slat.get("tex_slat")
+        if tex_slat_raw is not None:
+            raw_tex_feats = tex_slat_raw.feats.to(device=device, dtype=torch.float32)
+            if _tex_mean is not None and _tex_std is not None:
+                tex_normed_feats = (raw_tex_feats - _tex_mean) / _tex_std
+            else:
+                tex_normed_feats = raw_tex_feats
+            tex_slat_normed = _sp.SparseTensor(
+                feats=tex_normed_feats,
+                coords=tex_slat_raw.coords.to(device),
+            )
+            log.info("SegviGen full: using real tex_slat")
+        else:
+            tex_slat_normed = _sp.SparseTensor(
+                feats=torch.zeros(len(coords), noise_ch, device=device, dtype=torch.float32),
+                coords=coords,
+            )
+            log.info("SegviGen full: using zero tex_proxy (no real tex_slat)")
 
+        # ── Conditioning ─────────────────────────────────────────────────
         pos_cond = conditioning.get("cond_1024", conditioning["cond_512"])
         neg_cond = conditioning["neg_cond"]
 
-        def _to_device(c):
-            if isinstance(c, torch.Tensor):
-                return c.to(device=device, dtype=dtype)
-            if isinstance(c, list):
-                return [t.to(device=device, dtype=dtype) if isinstance(t, torch.Tensor) else t for t in c]
-            return c
-        pos_cond = _to_device(pos_cond)
-        neg_cond = _to_device(neg_cond)
+        def _to_device(obj, dev, dt=None):
+            if hasattr(obj, 'to'):
+                kwargs = {"device": dev}
+                if dt is not None:
+                    kwargs["dtype"] = dt
+                return obj.to(**kwargs)
+            return obj
 
-        extra_model_kwargs = {"concat_cond": concat_cond} if concat_cond is not None else {}
+        pos_cond = _to_device(pos_cond, device, dtype)
+        neg_cond = _to_device(neg_cond, device, dtype)
 
-        log.info(f"SegviGen: sampling ({steps} steps, cfg={guidance_strength})")
-        sampler = FlowEulerGuidanceIntervalSampler(sigma_min=1e-5)
-        result = sampler.sample(
+        # ── Sample with guidance_rescale + rescale_t ─────────────────────
+        sampler_wrapper = SegviGenFlowSampler(sigma_min=1e-5)
+        log.info(f"SegviGen full: sampling ({steps} steps, cfg={guidance_strength}, "
+                 f"rescale={guidance_rescale}, rescale_t={_rescale_t})")
+
+        result = sampler_wrapper.sample(
             flow_model, noise,
             cond=pos_cond,
             neg_cond=neg_cond,
             steps=steps,
             guidance_strength=guidance_strength,
+            guidance_rescale=guidance_rescale,
             guidance_interval=(guidance_interval_start, guidance_interval_end),
-            verbose=True,
-            tqdm_desc="SegviGen",
-            **extra_model_kwargs,
+            rescale_t=_rescale_t,
+            concat_cond=shape_cond,
+            tex_slats=tex_slat_normed,
         )
         seg_latent = result.samples
 
         # ── Decode labels via core/decode.py ─────────────────────────────
-        import numpy as np
         from core.decode import decode_seg_result
-        from core.contracts import build_segvigen_seg_result, MODE_FULL
 
         vr = (slat.get("voxel") or {}).get("resolution", 512)
         coords_np = seg_latent.coords[:, 1:].cpu().numpy().astype(np.int32)

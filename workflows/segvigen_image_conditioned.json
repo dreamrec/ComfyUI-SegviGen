@@ -1,8 +1,8 @@
 {
   "id": "segvigen-image-conditioned",
-  "revision": 5,
+  "revision": 6,
   "last_node_id": 12,
-  "last_link_id": 18,
+  "last_link_id": 21,
   "nodes": [
     {
       "id": 1,
@@ -14,7 +14,7 @@
       "mode": 0,
       "inputs": [],
       "outputs": [
-        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "links": [1, 2, 3, 4], "slot_index": 0}
+        {"name": "model_config", "type": "TRELLIS2_MODEL_CONFIG", "links": [1, 2, 3, 4, 19], "slot_index": 0}
       ],
       "properties": {"cnr_id": "ComfyUI-TRELLIS2", "Node name for S&R": "LoadTrellis2Models"},
       "widgets_values": ["512", "auto", "auto"]
@@ -68,7 +68,7 @@
         {"name": "background_color", "type": "COMBO", "widget": {"name": "background_color"}, "link": null}
       ],
       "outputs": [
-        {"name": "conditioning",       "type": "TRELLIS2_CONDITIONING", "links": [10], "slot_index": 0},
+        {"name": "conditioning",       "type": "TRELLIS2_CONDITIONING", "links": [10, 20], "slot_index": 0},
         {"name": "preprocessed_image", "type": "IMAGE",                 "links": null,  "slot_index": 1}
       ],
       "properties": {"cnr_id": "ComfyUI-TRELLIS2", "Node name for S&R": "Trellis2GetConditioning"},
@@ -119,19 +119,25 @@
     },
     {
       "id": 7,
-      "type": "SegviGenFromShapeResult",
+      "type": "SegviGenVoxelEncode",
       "pos": [1360, 40],
-      "size": [300, 60],
+      "size": [300, 130],
       "flags": {},
       "order": 6,
       "mode": 0,
       "inputs": [
-        {"name": "shape_result", "type": "TRELLIS2_SHAPE_RESULT", "link": 11}
+        {"name": "model_config",         "type": "TRELLIS2_MODEL_CONFIG",   "link": 19},
+        {"name": "shape_result",         "type": "TRELLIS2_SHAPE_RESULT",   "link": 11},
+        {"name": "conditioning",         "type": "TRELLIS2_CONDITIONING",   "link": 20},
+        {"name": "seed",                 "type": "INT",   "shape": 7, "widget": {"name": "seed"},                 "link": null},
+        {"name": "tex_guidance_strength","type": "FLOAT", "shape": 7, "widget": {"name": "tex_guidance_strength"},"link": null},
+        {"name": "tex_sampling_steps",   "type": "INT",   "shape": 7, "widget": {"name": "tex_sampling_steps"},   "link": null}
       ],
       "outputs": [
         {"name": "slat", "type": "SEGVIGEN_SLAT", "links": [12], "slot_index": 0}
       ],
-      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenFromShapeResult"}
+      "properties": {"cnr_id": "ComfyUI-SegviGen", "Node name for S&R": "SegviGenVoxelEncode"},
+      "widgets_values": [0, "fixed", 7.5, 12]
     },
     {
       "id": 8,
@@ -242,14 +248,16 @@
     [8,  3, 0,  5, 1, "IMAGE"],
     [9,  3, 1,  5, 2, "MASK"],
     [10, 4, 0,  6, 1, "TRELLIS2_CONDITIONING"],
-    [11, 6, 0,  7, 0, "TRELLIS2_SHAPE_RESULT"],
+    [11, 6, 0,  7, 1, "TRELLIS2_SHAPE_RESULT"],
     [12, 7, 0,  8, 1, "SEGVIGEN_SLAT"],
     [13, 6, 1,  8, 3, "TRIMESH"],
     [14, 5, 0,  8, 2, "SEGVIGEN_COND"],
     [15, 8, 0,  9, 0, "SEGVIGEN_SEG_RESULT"],
     [16, 8, 0, 11, 0, "SEGVIGEN_SEG_RESULT"],
     [17, 9, 0, 10, 0, "STRING"],
-    [18, 11, 0, 12, 0, "IMAGE"]
+    [18, 11, 0, 12, 0, "IMAGE"],
+    [19, 1, 0,  7, 0, "TRELLIS2_MODEL_CONFIG"],
+    [20, 4, 0,  7, 2, "TRELLIS2_CONDITIONING"]
   ],
   "groups": [
     {
@@ -259,19 +267,19 @@
       "font_size": 14
     },
     {
-      "title": "2. TRELLIS2: Extract Conditioning (for shape gen + segmentation)",
+      "title": "2. Conditioning: TRELLIS2 (for shape) + SegviGen (for sampler)",
       "bounding": [620, 90, 680, 350],
       "color": "#3d6b44",
       "font_size": 14
     },
     {
-      "title": "3. TRELLIS2: Image → 3D Shape → SegviGen SLAT",
-      "bounding": [960, 10, 720, 120],
+      "title": "3. Shape Generation + Bridge Encode (shape + tex)",
+      "bounding": [960, 10, 720, 200],
       "color": "#5e4a7e",
       "font_size": 14
     },
     {
-      "title": "4. SegviGen: Segmentation + Export",
+      "title": "4. Full Segmentation + Export",
       "bounding": [1700, 10, 760, 310],
       "color": "#7e4a4a",
       "font_size": 14
@@ -281,17 +289,17 @@
   "extra": {
     "ds": {"scale": 0.40, "offset": [0, 0]},
     "_note": [
-      "SegviGen Image-Conditioned Segmentation Workflow (v5)",
+      "SegviGen Full Auto-Segmentation Workflow (v6 — bridge-faithful)",
       "",
       "Flow:",
-      "1. Load an image of your 3D object (same image used for shape gen + conditioning)",
-      "2. SegviGenPreprocess removes background (BiRefNet) → image + mask",
-      "3. Trellis2GetConditioning: DINOv3 features → TRELLIS2_CONDITIONING (for shape gen)",
-      "4. SegviGenGetConditioning: DINOv3 features → SEGVIGEN_COND (for segmentation CFG)",
-      "5. Trellis2ImageToShape: generates 3D mesh + shape_slat at 512-res",
-      "6. SegviGenFromShapeResult: extracts real-feature shape_slat (fixes zero-feature bug)",
-      "7. SegviGenFullSampler: image-guided automatic part segmentation",
-      "8. Export segmented GLB + render 2D preview"
+      "1. Load image → BiRefNet removes background",
+      "2. Trellis2GetConditioning: DINOv3 features for shape gen AND bridge encode",
+      "3. SegviGenGetConditioning: DINOv3 features for segmentation CFG",
+      "4. Trellis2ImageToShape: generates 3D mesh + shape_slat at 512-res",
+      "5. SegviGenVoxelEncode: extracts shape_slat + samples real tex_slat via bridge",
+      "6. SegviGenFullSampler: auto part segmentation with real tex_slat,",
+      "   guidance_rescale, rescale_t, and decoded color-cluster labels",
+      "7. Export segmented parts + render preview"
     ]
   },
   "version": 0.4
