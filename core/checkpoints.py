@@ -36,7 +36,7 @@ CHECKPOINT_MANIFEST: Dict[str, dict] = {
         "hf_repo": "fenghora/SegviGen",
         "filename": "full_seg_w_2d_map.ckpt",
         "format": "ckpt",
-        "sha256": None,  # not yet downloaded from fenghora
+        "sha256": "4558c581b3a881f45fa2575e65cd74a10cd72a48078caddb0e32f2fac5175c14",
         "description": "2D-map-guided full-mesh segmentation",
     },
     "full_legacy": {
