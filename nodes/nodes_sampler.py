@@ -265,8 +265,20 @@ class SegviGenFullSampler:
         log.info(f"SegviGen full: {k}-cluster K-means → "
                  f"{len(np.unique(cluster_ids))} segments (grid {G}³)")
 
+        from core.contracts import (
+            build_segvigen_seg_result, LABELS_LATENT_KMEANS_FALLBACK, MODE_FULL,
+        )
+
         mm.soft_empty_cache()
-        return ({"latent": seg_latent, "labels": labels, "voxel": slat.get("voxel"), "mesh": trimesh},)
+        return (build_segvigen_seg_result(
+            output_tex_slat=seg_latent,
+            labels=labels,
+            labels_source=LABELS_LATENT_KMEANS_FALLBACK,
+            mode=MODE_FULL,
+            mesh=trimesh,
+            voxel=slat.get("voxel"),
+            source=slat.get("source"),
+        ),)
 
 
 class SegviGenInteractiveSampler:
@@ -301,6 +313,11 @@ class SegviGenInteractiveSampler:
                 "guidance_rescale": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "guidance_interval_start": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "guidance_interval_end": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "allow_legacy_shape_only_fallback": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Allow degraded results when tex_slat is unavailable. "
+                               "Off by default — faithful mode requires real tex_slat.",
+                }),
             },
         }
 
@@ -317,6 +334,7 @@ class SegviGenInteractiveSampler:
         guidance_rescale: float = 0.0,
         guidance_interval_start: float = 0.6,
         guidance_interval_end: float = 0.9,
+        allow_legacy_shape_only_fallback: bool = False,
     ):
         import torch
         import numpy as np
@@ -341,16 +359,30 @@ class SegviGenInteractiveSampler:
                 "Click '🎯 Open 3D Picker' on the MeshPicker node, select "
                 "the part(s) you want, then hit Run again."
             )
-            return ({"latent": None, "labels": None,
-                     "voxel": slat.get("voxel"), "mesh": trimesh},)
+            from core.contracts import build_segvigen_seg_result, MODE_PREVIEW_PASSTHROUGH
+            return (build_segvigen_seg_result(
+                mode=MODE_PREVIEW_PASSTHROUGH,
+                mesh=trimesh,
+                voxel=slat.get("voxel"),
+                source=slat.get("source"),
+            ),)
 
-        # ── Soft source guard ────────────────────────────────────────────
-        if slat.get("source") != "full":
+        # ── Source guard (hard-error by default) ─────────────────────────
+        from core.contracts import (
+            validate_segvigen_slat, SOURCE_SHAPE_ONLY, SOURCE_BRIDGE_FULL,
+        )
+        if slat.get("source") == SOURCE_SHAPE_ONLY:
+            if not allow_legacy_shape_only_fallback:
+                raise ValueError(
+                    "SegviGen: SLAT has source='shape_only' (no tex_slat). "
+                    "Interactive segmentation requires real tex_slat for faithful results. "
+                    "Connect SegviGenVoxelEncode (not SegviGenFromShapeResult) with "
+                    "conditioning to produce tex_slat. To override, enable "
+                    "'allow_legacy_shape_only_fallback' in the advanced options."
+                )
             log.warning(
-                "SegviGen: SLAT has source='%s' (no tex_slat). "
-                "Interactive segmentation quality will be degraded. "
-                "For best results, connect SegviGenVoxelEncode with conditioning.",
-                slat.get("source", "unknown"),
+                "SegviGen: SLAT has source='shape_only' — legacy fallback enabled. "
+                "Interactive segmentation quality will be degraded.",
             )
 
         # ── Load interactive checkpoint ──────────────────────────────────
@@ -501,6 +533,11 @@ class SegviGenInteractiveSampler:
         )
 
         # ── Label extraction ─────────────────────────────────────────────
+        from core.contracts import (
+            build_segvigen_seg_result, MODE_INTERACTIVE_BINARY,
+            LABELS_DECODED_BINARY, LABELS_LATENT_KMEANS_FALLBACK,
+        )
+
         subs = slat.get("subs")
         grid_res = min(voxel_resolution, 64)
         if subs is not None:
@@ -509,11 +546,20 @@ class SegviGenInteractiveSampler:
                 coords_np, voxel_resolution,
                 grid_resolution=grid_res,
             )
+            labels_source = LABELS_DECODED_BINARY
         else:
             labels = _decode_via_kmeans(
                 result.samples, coords_np, grid_res,
             )
+            labels_source = LABELS_LATENT_KMEANS_FALLBACK
 
         mm.soft_empty_cache()
-        return ({"latent": result.samples, "labels": labels,
-                 "voxel": slat.get("voxel"), "mesh": trimesh},)
+        return (build_segvigen_seg_result(
+            output_tex_slat=result.samples,
+            labels=labels,
+            labels_source=labels_source,
+            mode=MODE_INTERACTIVE_BINARY,
+            mesh=trimesh,
+            voxel=slat.get("voxel"),
+            source=slat.get("source"),
+        ),)

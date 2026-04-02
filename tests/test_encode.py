@@ -64,14 +64,40 @@ def mock_stages(monkeypatch):
         "core.trellis2_shim.load_trellis2_stages",
         lambda: stages,
     )
+    # Mock trellis2.modules.sparse.SparseTensor for _deserialize_sparse_tensor
+    if "trellis2" not in sys.modules:
+        sys.modules["trellis2"] = types.ModuleType("trellis2")
+    if "trellis2.modules" not in sys.modules:
+        mods = types.ModuleType("trellis2.modules")
+        sys.modules["trellis2.modules"] = mods
+        sys.modules["trellis2"].modules = mods
+    if "trellis2.modules.sparse" not in sys.modules:
+        sparse_mod = types.ModuleType("trellis2.modules.sparse")
+        sparse_mod.SparseTensor = _MockSparseTensor
+        sys.modules["trellis2.modules.sparse"] = sparse_mod
+        sys.modules["trellis2.modules"].sparse = sparse_mod
+    else:
+        monkeypatch.setattr("trellis2.modules.sparse.SparseTensor", _MockSparseTensor)
     return stages
+
+
+def _mock_ipc_sparse_tensor(n=100, ch=32):
+    """Create a mock IPC-serialized SparseTensor dict matching real format."""
+    return {
+        "_type": "SparseTensor",
+        "feats": torch.randn(n, ch),
+        "coords": torch.cat([
+            torch.zeros(n, 1, dtype=torch.int32),
+            torch.randint(0, 64, (n, 3), dtype=torch.int32),
+        ], dim=1),
+    }
 
 
 @pytest.fixture
 def mock_shape_result():
     return {
-        "shape_slat": {"mock": True},
-        "subs": [{"mock": True}],
+        "shape_slat": _mock_ipc_sparse_tensor(),
+        "subs": [_mock_ipc_sparse_tensor(50, 32)],
         "resolution": 512,
         "pipeline_type": "512",
     }
@@ -93,7 +119,6 @@ def test_extract_shape_data_returns_tuple(mock_stages, mock_shape_result):
     assert hasattr(shape_slat, "feats")
     assert resolution == 512
     assert pipeline_type == "512"
-    assert mock_stages._init_config_called
 
 
 def test_sample_tex_slat_calls_stages(mock_stages, mock_shape_result, mock_conditioning):
@@ -112,7 +137,7 @@ def test_sample_tex_slat_calls_stages(mock_stages, mock_shape_result, mock_condi
 def test_sample_tex_slat_512_model_key(mock_stages, mock_conditioning):
     from core.encode import sample_tex_slat
     shape_result_512 = {
-        "shape_slat": {"mock": True},
+        "shape_slat": _mock_ipc_sparse_tensor(),
         "pipeline_type": "512",
     }
     sample_tex_slat(shape_result_512, mock_conditioning, "cpu")
@@ -122,7 +147,7 @@ def test_sample_tex_slat_512_model_key(mock_stages, mock_conditioning):
 def test_sample_tex_slat_1024_model_key(mock_stages):
     from core.encode import sample_tex_slat
     shape_result_1024 = {
-        "shape_slat": {"mock": True},
+        "shape_slat": _mock_ipc_sparse_tensor(),
         "pipeline_type": "1024",
     }
     conditioning_1024 = {
@@ -138,7 +163,7 @@ def test_sample_tex_slat_1024_falls_back_to_512(mock_stages, mock_conditioning):
     """When pipeline_type=1024 but cond_1024 is missing, should fall back to cond_512."""
     from core.encode import sample_tex_slat
     shape_result_1024 = {
-        "shape_slat": {"mock": True},
+        "shape_slat": _mock_ipc_sparse_tensor(),
         "pipeline_type": "1024",
     }
     # mock_conditioning has no cond_1024

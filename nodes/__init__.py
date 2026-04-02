@@ -34,7 +34,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SegviGenPreprocess": "SegviGen: Image Preprocessing",
     "SegviGenGetConditioning": "SegviGen: Conditioner",
     "SegviGenNullConditioning": "SegviGen: Null Conditioning (no image)",
-    "SegviGenFullSampler": "SegviGen: Sampling",
+    "SegviGenFullSampler": "SegviGen: Full Sampling (experimental)",
     "SegviGenInteractiveSampler": "SegviGen: Interactive Sampler",
     "SegviGenPointInput": "SegviGen: Point Input",
     "SegviGenMeshPicker": "SegviGen: 3D Mesh Picker",

@@ -183,6 +183,8 @@ class SegviGenVoxelEncode:
             shape_result, device
         )
 
+        from core.contracts import build_segvigen_slat, SOURCE_BRIDGE_FULL, SOURCE_SHAPE_ONLY
+
         try:
             tex_slat = sample_tex_slat(
                 shape_result, conditioning, device,
@@ -190,25 +192,26 @@ class SegviGenVoxelEncode:
                 tex_guidance_strength=tex_guidance_strength,
                 tex_sampling_steps=tex_sampling_steps,
             )
-            source = "full"
+            source = SOURCE_BRIDGE_FULL
             log.info(
-                f"SegviGen: encode complete — source=full, "
+                f"SegviGen: encode complete — source={source}, "
                 f"shape_slat={shape_slat.feats.shape}, tex_slat={tex_slat.feats.shape}"
             )
         except Exception as e:
             log.warning(f"SegviGen: tex sampling failed ({e}); using shape_only mode")
             tex_slat = None
             subs = None
-            source = "shape_only"
+            source = SOURCE_SHAPE_ONLY
 
         mm.soft_empty_cache()
-        return ({
-            "latent": shape_slat,
-            "tex_slat": tex_slat,
-            "subs": subs,
-            "voxel": {"resolution": resolution},
-            "source": source,
-        },)
+        return (build_segvigen_slat(
+            shape_slat,
+            tex_slat=tex_slat,
+            subs=subs,
+            voxel_resolution=resolution,
+            source=source,
+            pipeline_type=pipeline_type,
+        ),)
 
 
 class SegviGenFromShapeResult:
@@ -298,6 +301,11 @@ class SegviGenFromShapeResult:
             f"resolution={resolution}, "
             f"feature_norm={shape_slat.feats.norm(dim=-1).mean():.4f}"
         )
+        from core.contracts import build_segvigen_slat, SOURCE_SHAPE_ONLY
+
         mm.soft_empty_cache()
-        return ({"latent": shape_slat, "voxel": {"resolution": resolution},
-                 "source": "shape_only", "tex_slat": None, "subs": None},)
+        return (build_segvigen_slat(
+            shape_slat,
+            voxel_resolution=resolution,
+            source=SOURCE_SHAPE_ONLY,
+        ),)

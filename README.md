@@ -1,6 +1,21 @@
 # ComfyUI-SegviGen
 
-ComfyUI nodes for [SegviGen](https://github.com/Nelipot-Lee/SegviGen) 3D part segmentation.
+ComfyUI nodes for [SegviGen](https://github.com/Nelipot-Lee/SegviGen) 3D mesh part segmentation.
+
+## Current State (v3 contract freeze, April 2026)
+
+This repo is in active recovery toward **upstream SegviGen paper fidelity**. Here is what works today and what does not:
+
+| Path | Status | Notes |
+|------|--------|-------|
+| **Interactive segmentation (bridge)** | Production | Uses real `tex_slat` via TRELLIS2 bridge, packed multi-click, decoded binary labels |
+| **Full auto-segmentation** | Experimental | Still uses latent K-means heuristic, not paper-faithful decoded output |
+| **Asset-native encoding** | Not started | The paper's `process_glb_to_vxz` pipeline is not yet implemented |
+| **2D-guided full segmentation** | Not started | Requires `full_seg_w_2d_map.ckpt` and dedicated conditioning node |
+
+**Architecture:** The repo currently supports one input path (TRELLIS2 image-to-shape bridge) with plans for a second (asset-native mesh encoding). Both converge into the same sampler and export pipeline. See `docs/superpowers/plans/2026-04-02-upstream-faithful-development-roadmap.md` for the full plan.
+
+**Checkpoints:** Interactive mode uses `fenghora/SegviGen` (interactive_seg.ckpt). Full mode uses `Aero-Ex/SegviGen` (full_seg.safetensors) but will migrate to `fenghora/SegviGen` when the full sampler is rewritten.
 
 ## Requirements
 
@@ -10,27 +25,27 @@ ComfyUI nodes for [SegviGen](https://github.com/Nelipot-Lee/SegviGen) 3D part se
 ## Installation
 
 1. Clone to `ComfyUI/custom_nodes/ComfyUI-SegviGen`
-2. Restart ComfyUI — checkpoint downloads automatically on first use
+2. Restart ComfyUI -- checkpoint downloads automatically on first use
 
 ## Nodes
 
-| Node | Purpose |
-|------|---------|
-| SegviGen: Preprocess (BiRefNet) | Background removal |
-| SegviGen: Get Conditioning | DinoV3 feature extraction |
-| SegviGen: GLB to Voxel | Mesh → voxel grid |
-| SegviGen: Voxel Encode | Voxel → SLAT latent |
-| SegviGen: Full Sampler | Auto part segmentation |
-| SegviGen: Interactive Sampler | Point-guided segmentation |
-| SegviGen: Point Input | Define click coordinates |
-| SegviGen: Render Preview | Colored segment preview |
-| SegviGen: Export Parts | Per-part GLB export |
+| Node | Purpose | Status |
+|------|---------|--------|
+| SegviGen: Image Preprocessing | Background removal via BiRefNet | Stable |
+| SegviGen: Conditioner | DinoV3 feature extraction for sampler | Stable |
+| SegviGen: Encode (shape + tex) | TRELLIS2 bridge encoder with real tex_slat | Stable |
+| SegviGen: Interactive Sampler | Point-guided binary segmentation | Stable |
+| SegviGen: 3D Mesh Picker | Click-to-select 3D UI | Stable |
+| SegviGen: Point Input | Manual coordinate entry | Stable |
+| SegviGen: Render Preview | Colored segment preview images | Stable |
+| SegviGen: Splitter | Per-part GLB export | Stable |
+| SegviGen: Full Sampling (experimental) | Auto part segmentation | Experimental -- uses K-means heuristic |
+| SegviGen: From TRELLIS2 Shape (shape only) | Shape-only encode (no tex_slat) | Legacy -- degraded quality |
+| SegviGen: Null Conditioning (no image) | Empty conditioning for testing | Legacy -- not for production |
+| SegviGen: Voxelizer | Mesh to occupancy voxel grid | Legacy |
+| SegviGen: Load Mesh | Load mesh from file | Utility |
 
-## Improvements over Aero-Ex port
+## Workflows
 
-- Interactive (point-guided) segmentation — ported from original
-- `guidance_rescale` parameter restored
-- Configurable texture size (256–4096) and face count
-- Proper VRAM management (no singleton model manager)
-- Progress bars + interrupt support
-- Accurate mesh face count (100k default, not 50k)
+- `workflows/segvigen_interactive.json` -- Interactive point-guided segmentation (recommended)
+- `workflows/segvigen_image_conditioned.json` -- Full auto-segmentation (experimental)

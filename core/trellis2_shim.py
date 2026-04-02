@@ -77,4 +77,52 @@ def load_trellis2_stages():
     spec.loader.exec_module(stages_mod)
 
     log.info("SegviGen: loaded TRELLIS2 nodes/stages.py via package shim")
+    ensure_supported_trellis2_revision(stages_mod)
     return stages_mod
+
+
+# ── Required TRELLIS2 private API surface ─────────────────────────────────────
+# These are the private functions SegviGen depends on. If any are missing or
+# have incompatible signatures, the installed TRELLIS2 is too old/new.
+_REQUIRED_CALLABLES = [
+    "_init_config",
+    "_sample_tex_slat",
+    "_decode_tex_slat",
+]
+
+_compat_checked = False
+
+
+def ensure_supported_trellis2_revision(stages_mod=None):
+    """
+    Validate that the loaded TRELLIS2 stages module exposes the private
+    functions SegviGen depends on. Called once on first load.
+
+    Raises ImportError with an actionable message if incompatible.
+    """
+    global _compat_checked
+    if _compat_checked:
+        return
+
+    if stages_mod is None:
+        stages_key = f"{_SHIM_PKG}.stages"
+        stages_mod = sys.modules.get(stages_key)
+        if stages_mod is None:
+            return  # not loaded yet, will check on first load
+
+    missing = []
+    for name in _REQUIRED_CALLABLES:
+        fn = getattr(stages_mod, name, None)
+        if fn is None or not callable(fn):
+            missing.append(name)
+
+    if missing:
+        raise ImportError(
+            f"SegviGen: installed ComfyUI-TRELLIS2 is incompatible — "
+            f"missing required functions in stages.py: {', '.join(missing)}.\n"
+            f"Please update ComfyUI-TRELLIS2 to a version that includes "
+            f"_init_config, _sample_tex_slat, and _decode_tex_slat."
+        )
+
+    _compat_checked = True
+    log.info("SegviGen: TRELLIS2 compatibility check passed")
