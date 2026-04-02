@@ -237,43 +237,27 @@ class SegviGenFullSampler:
         )
         seg_latent = result.samples
 
-        # ── decode labels from model output via K-means clustering ────────
+        # ── Decode labels via core/decode.py ─────────────────────────────
         import numpy as np
-        from sklearn.cluster import MiniBatchKMeans
+        from core.decode import decode_seg_result
+        from core.contracts import build_segvigen_seg_result, MODE_FULL
 
         vr = (slat.get("voxel") or {}).get("resolution", 512)
-        seg_feats = seg_latent.feats.cpu().float().numpy()
-        seg_coords_np = seg_latent.coords[:, 1:].cpu().numpy().astype(np.int32)
+        coords_np = seg_latent.coords[:, 1:].cpu().numpy().astype(np.int32)
+        subs = slat.get("subs")
 
-        # Auto-detect number of parts (default 4: e.g. turret / hull / tracks / other)
-        n_parts = 4
-        k = min(n_parts, max(2, len(seg_feats) // 10))
-        km = MiniBatchKMeans(n_clusters=k, n_init=5, random_state=0)
-        cluster_ids = km.fit_predict(seg_feats)
-
-        # Build [G,G,G] label grid (1-based: cluster 0 → label 1, etc.)
-        # Scale coords from vr (e.g. 512) down to 64-res to avoid OOM.
-        G = min(vr, 64)
-        scale = vr / G
-        labels = np.zeros((G, G, G), dtype=np.int32)
-        for j, (x, y, z) in enumerate(seg_coords_np):
-            gx = min(int(x / scale), G - 1)
-            gy = min(int(y / scale), G - 1)
-            gz = min(int(z / scale), G - 1)
-            if gx >= 0 and gy >= 0 and gz >= 0:
-                labels[gx, gy, gz] = int(cluster_ids[j]) + 1
-        log.info(f"SegviGen full: {k}-cluster K-means → "
-                 f"{len(np.unique(cluster_ids))} segments (grid {G}³)")
-
-        from core.contracts import (
-            build_segvigen_seg_result, LABELS_LATENT_KMEANS_FALLBACK, MODE_FULL,
+        labels, labels_source, decoded_voxels = decode_seg_result(
+            seg_latent, subs, coords_np, vr,
+            mode="full",
+            grid_resolution=min(vr, 64),
         )
 
         mm.soft_empty_cache()
         return (build_segvigen_seg_result(
             output_tex_slat=seg_latent,
+            decoded_tex_voxels=decoded_voxels,
             labels=labels,
-            labels_source=LABELS_LATENT_KMEANS_FALLBACK,
+            labels_source=labels_source,
             mode=MODE_FULL,
             mesh=trimesh,
             voxel=slat.get("voxel"),
@@ -532,30 +516,23 @@ class SegviGenInteractiveSampler:
             tex_slats=tex_slat_normed,
         )
 
-        # ── Label extraction ─────────────────────────────────────────────
-        from core.contracts import (
-            build_segvigen_seg_result, MODE_INTERACTIVE_BINARY,
-            LABELS_DECODED_BINARY, LABELS_LATENT_KMEANS_FALLBACK,
-        )
+        # ── Label extraction via core/decode.py ────────────────────────
+        from core.decode import decode_seg_result
+        from core.contracts import build_segvigen_seg_result, MODE_INTERACTIVE_BINARY
 
         subs = slat.get("subs")
         grid_res = min(voxel_resolution, 64)
-        if subs is not None:
-            labels = decode_seg_from_base_color(
-                result.samples, subs,
-                coords_np, voxel_resolution,
-                grid_resolution=grid_res,
-            )
-            labels_source = LABELS_DECODED_BINARY
-        else:
-            labels = _decode_via_kmeans(
-                result.samples, coords_np, grid_res,
-            )
-            labels_source = LABELS_LATENT_KMEANS_FALLBACK
+
+        labels, labels_source, decoded_voxels = decode_seg_result(
+            result.samples, subs, coords_np, voxel_resolution,
+            mode="interactive_binary",
+            grid_resolution=grid_res,
+        )
 
         mm.soft_empty_cache()
         return (build_segvigen_seg_result(
             output_tex_slat=result.samples,
+            decoded_tex_voxels=decoded_voxels,
             labels=labels,
             labels_source=labels_source,
             mode=MODE_INTERACTIVE_BINARY,

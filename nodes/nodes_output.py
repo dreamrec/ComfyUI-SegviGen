@@ -80,6 +80,11 @@ class SegviGenExportParts:
                     "tooltip": "Discard segments smaller than this face count.",
                 }),
                 "filename_prefix": ("STRING", {"default": "segvigen"}),
+                "export_sidecar": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Export a JSON sidecar with mode, labels_source, "
+                               "settings, and per-part voxel counts.",
+                }),
             },
         }
 
@@ -89,6 +94,7 @@ class SegviGenExportParts:
         max_faces: int = 100_000,
         min_segment_faces: int = 50,
         filename_prefix: str = "segvigen",
+        export_sidecar: bool = True,
     ):
         import numpy as np
         import trimesh
@@ -159,23 +165,25 @@ class SegviGenExportParts:
             fallback.export(fallback_path, file_type="glb")
             return (fallback_filename, "")
 
+        # ── Part naming based on mode ──────────────────────────────────
+        mode = seg_result.get("mode", "full")
+        if mode == "interactive_binary" and len(parts) == 2:
+            part_names = ["selected", "remainder"]
+        else:
+            part_names = [f"part_{i+1:02d}" for i in range(len(parts))]
+
         # ── 1. Combined GLB: all parts as named sub-objects in one file ──
-        # Saved to the OUTPUT ROOT (no subfolder) so ComfyUI's Preview3D node
-        # can load it — Preview3D.execute passes the filename string directly to
-        # PreviewUI3D which the frontend resolves via /view?filename=X&type=output.
-        # An absolute or subfolder path would silently fail to load.
         scene = trimesh.Scene()
         for i, part in enumerate(parts):
             if hasattr(part, 'faces') and len(part.faces) > max_faces:
                 part = _simplify(part, max_faces)
 
-            # Color each part with its segment color
             n = len(part.faces)
             fc = np.full((n, 4), 255, dtype=np.uint8)
             fc[:, :3] = SEGMENT_COLORS[i % len(SEGMENT_COLORS)]
             part.visual = trimesh.visual.ColorVisuals(face_colors=fc)
 
-            name = f"part_{i:02d}"
+            name = part_names[i] if i < len(part_names) else f"part_{i+1:02d}"
             scene.add_geometry(part, node_name=name, geom_name=name)
 
         combined_filename = f"{filename_prefix}_parts_{timestamp}.glb"
@@ -183,18 +191,64 @@ class SegviGenExportParts:
         scene.export(combined_path, file_type="glb")
         log.info(f"SegviGen: combined GLB ({len(parts)} parts) → {combined_path}")
 
-        # ── 2. Individual GLB files (one per part, in timestamped subfolder) ─
+        # ── 2. Individual GLB files ──────────────────────────────────────
         individual_paths = []
         for i, part in enumerate(parts):
             if hasattr(part, 'faces') and len(part.faces) > max_faces:
                 part = _simplify(part, max_faces)
-            path = os.path.join(parts_dir, f"part_{i:02d}.glb")
+            name = part_names[i] if i < len(part_names) else f"part_{i+1:02d}"
+            path = os.path.join(parts_dir, f"{name}.glb")
             part.export(path, file_type="glb")
             individual_paths.append(path)
-            log.info(f"SegviGen: part {i} ({len(part.faces)} faces) → {path}")
+            log.info(f"SegviGen: {name} ({len(part.faces)} faces) → {path}")
 
-        # Return just the filename (no path) for Preview3D compatibility.
+        # ── 3. Sidecar JSON with metadata ────────────────────────────────
+        if export_sidecar:
+            _export_sidecar(
+                seg_result, parts, part_names, labels,
+                parts_dir, filename_prefix, timestamp,
+            )
+
         return (combined_filename, "\n".join(individual_paths))
+
+
+def _export_sidecar(seg_result, parts, part_names, labels, parts_dir,
+                     filename_prefix, timestamp):
+    """Write a JSON sidecar with segmentation metadata for reproducibility."""
+    import json
+    import numpy as np
+
+    part_info = []
+    for i, part in enumerate(parts):
+        name = part_names[i] if i < len(part_names) else f"part_{i+1:02d}"
+        face_count = len(part.faces) if hasattr(part, 'faces') else 0
+        # Count occupied voxels for this label
+        label_id = i + 1
+        voxel_count = int((labels == label_id).sum()) if labels is not None else 0
+        part_info.append({
+            "name": name,
+            "label_id": label_id,
+            "face_count": face_count,
+            "voxel_count": voxel_count,
+        })
+
+    sidecar = {
+        "segvigen_contract_version": seg_result.get("segvigen_contract_version"),
+        "mode": seg_result.get("mode"),
+        "labels_source": seg_result.get("labels_source"),
+        "source": seg_result.get("source"),
+        "num_parts": len(parts),
+        "parts": part_info,
+        "timestamp": timestamp,
+    }
+
+    sidecar_path = os.path.join(parts_dir, f"{filename_prefix}_metadata.json")
+    try:
+        with open(sidecar_path, "w") as f:
+            json.dump(sidecar, f, indent=2)
+        log.info(f"SegviGen: sidecar metadata → {sidecar_path}")
+    except Exception as e:
+        log.warning(f"SegviGen: failed to write sidecar: {e}")
 
 
 def _simplify(mesh, target_faces: int):

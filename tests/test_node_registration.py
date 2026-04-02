@@ -170,6 +170,8 @@ def test_all_nodes_in_mappings():
         "SegviGenFullSampler", "SegviGenInteractiveSampler",
         "SegviGenPointInput", "SegviGenMeshPicker",
         "SegviGenRenderPreview", "SegviGenExportParts",
+        "SegviGenAssetPrepare", "SegviGenAssetEncode",
+        "SegviGenGet2DMapConditioning",
     }
     assert set(NODE_CLASS_MAPPINGS.keys()) == expected
     assert set(NODE_DISPLAY_NAME_MAPPINGS.keys()) == expected

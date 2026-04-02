@@ -1,3 +1,8 @@
 easydict
 scikit-learn
 scikit-image
+scipy
+huggingface-hub
+trimesh
+Pillow
+numpy
