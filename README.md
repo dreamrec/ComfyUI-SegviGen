@@ -9,7 +9,7 @@ This repo is in active recovery toward **upstream SegviGen paper fidelity**. Her
 | Path | Status | Notes |
 |------|--------|-------|
 | **Interactive segmentation (bridge)** | Production | Uses real `tex_slat` via TRELLIS2 bridge, packed multi-click, decoded binary labels |
-| **Full auto-segmentation** | Experimental | Still uses latent K-means heuristic, not paper-faithful decoded output |
+| **Full auto-segmentation** | Bridge-faithful | Real `tex_slat`, 2N interleaving via Gen3DSegInteractive, decoded color-cluster labels (K-means fallback when decode unavailable) |
 | **Asset-native encoding** | Not started | The paper's `process_glb_to_vxz` pipeline is not yet implemented |
 | **2D-guided full segmentation** | Not started | Requires `full_seg_w_2d_map.ckpt` and dedicated conditioning node |
 

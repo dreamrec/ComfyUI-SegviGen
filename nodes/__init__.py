@@ -50,7 +50,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SegviGenGetConditioning": "SegviGen: Conditioner",
     "SegviGenGet2DMapConditioning": "SegviGen: 2D Map Conditioning (coming soon)",
     # ── Sampling ─────────────────────────────────────────────────────
-    "SegviGenFullSampler": "SegviGen: Full Sampling (experimental)",
+    "SegviGenFullSampler": "SegviGen: Full Sampling",
     "SegviGenInteractiveSampler": "SegviGen: Interactive Sampler",
     # ── Points / picker ──────────────────────────────────────────────
     "SegviGenPointInput": "SegviGen: Point Input (512-space)",
