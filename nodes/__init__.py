@@ -29,8 +29,8 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SegviGenLoadMesh": "SegviGen: Load Mesh",
     "SegviGenGLBtoVoxel": "SegviGen: Voxelizer",
-    "SegviGenVoxelEncode": "SegviGen: Voxel Encode (legacy)",
-    "SegviGenFromShapeResult": "SegviGen: From TRELLIS2 Shape",
+    "SegviGenVoxelEncode": "SegviGen: Encode (shape + tex)",
+    "SegviGenFromShapeResult": "SegviGen: From TRELLIS2 Shape (shape only)",
     "SegviGenPreprocess": "SegviGen: Image Preprocessing",
     "SegviGenGetConditioning": "SegviGen: Conditioner",
     "SegviGenNullConditioning": "SegviGen: Null Conditioning (no image)",

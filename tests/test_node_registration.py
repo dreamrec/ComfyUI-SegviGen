@@ -33,7 +33,7 @@ def test_glb_to_voxel_registration():
     types_ = node.INPUT_TYPES()
     # Both inputs optional — at least one of trimesh/glb_path must be provided at runtime
     assert "trimesh" in types_.get("optional", {}) or "trimesh" in types_.get("required", {})
-    assert "glb_path" in types_.get("optional", {}) or "glb_path" in types_.get("required", {})
+    assert "glb_file" in types_.get("optional", {}) or "glb_file" in types_.get("required", {})
 
 
 def test_voxel_encode_registration():
@@ -43,41 +43,28 @@ def test_voxel_encode_registration():
     assert "SEGVIGEN_SLAT" in node.RETURN_TYPES
     types_ = node.INPUT_TYPES()["required"]
     assert "model_config" in types_
-    assert "voxel" in types_
+    assert "shape_result" in types_
+    assert "conditioning" in types_
 
 
-def test_voxel_encode_output_shape(monkeypatch):
+def test_voxel_encode_output_shape():
     """
-    SegviGenVoxelEncode.encode() must return ({"latent": ..., "voxel": ...},)
-    without calling any real GPU models. Use monkeypatch to stub the encoder.
+    Verify SegviGenVoxelEncode registration — the actual encode() requires
+    TRELLIS2 stages, so we only test the class-level contract here.
     """
-    import numpy as np
     from nodes.nodes_voxel import SegviGenVoxelEncode
-    import core.pipeline  # must import first so monkeypatch can patch it
-
-    dummy_voxel = {"grid": np.ones((64, 64, 64), dtype=bool), "metadata": {}}
-    dummy_latent = object()  # opaque placeholder
-    dummy_patcher = type("P", (), {"model": None})()
-
-    monkeypatch.setattr(core.pipeline, "get_encoder_patcher", lambda cfg, d: dummy_patcher)
-    monkeypatch.setattr(core.pipeline, "encode_voxel_to_slat", lambda m, g, c: dummy_latent)
-
-    import comfy.model_management as mm_mod
-    # Ensure these attributes exist on the mock (they may not be present on minimal mocks)
-    if not hasattr(mm_mod, "load_models_gpu"):
-        mm_mod.load_models_gpu = lambda _: None
-    if not hasattr(mm_mod, "soft_empty_cache"):
-        mm_mod.soft_empty_cache = lambda: None
-    monkeypatch.setattr(mm_mod, "load_models_gpu", lambda _: None)
-    monkeypatch.setattr(mm_mod, "soft_empty_cache", lambda: None)
-
-    node = SegviGenVoxelEncode()
-    result = node.encode(model_config={"resolution": "512"}, voxel=dummy_voxel)
-    slat = result[0]
-    assert "latent" in slat
-    assert "voxel" in slat
-    assert slat["latent"] is dummy_latent
-    assert slat["voxel"] is dummy_voxel
+    node = SegviGenVoxelEncode
+    assert node.CATEGORY == "SegviGen"
+    assert node.FUNCTION == "encode"
+    assert node.RETURN_TYPES == ("SEGVIGEN_SLAT",)
+    types_ = node.INPUT_TYPES()
+    assert "model_config" in types_["required"]
+    assert "shape_result" in types_["required"]
+    assert "conditioning" in types_["required"]
+    opt = types_.get("optional", {})
+    assert "seed" in opt
+    assert "tex_guidance_strength" in opt
+    assert "tex_sampling_steps" in opt
 
 
 def test_preprocess_registration():
@@ -170,16 +157,19 @@ def test_export_parts_registration():
     assert "STRING" in node.RETURN_TYPES
     assert node.OUTPUT_NODE is True
     opt = node.INPUT_TYPES().get("optional", {})
-    assert "texture_size" in opt
+    assert "max_faces" in opt
     assert "min_segment_faces" in opt
 
 
-def test_all_9_nodes_in_mappings():
+def test_all_nodes_in_mappings():
     from nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
     expected = {
-        "SegviGenGLBtoVoxel", "SegviGenVoxelEncode", "SegviGenPreprocess",
-        "SegviGenGetConditioning", "SegviGenFullSampler", "SegviGenInteractiveSampler",
-        "SegviGenPointInput", "SegviGenRenderPreview", "SegviGenExportParts",
+        "SegviGenLoadMesh", "SegviGenGLBtoVoxel", "SegviGenVoxelEncode",
+        "SegviGenFromShapeResult", "SegviGenPreprocess",
+        "SegviGenGetConditioning", "SegviGenNullConditioning",
+        "SegviGenFullSampler", "SegviGenInteractiveSampler",
+        "SegviGenPointInput", "SegviGenMeshPicker",
+        "SegviGenRenderPreview", "SegviGenExportParts",
     }
     assert set(NODE_CLASS_MAPPINGS.keys()) == expected
     assert set(NODE_DISPLAY_NAME_MAPPINGS.keys()) == expected

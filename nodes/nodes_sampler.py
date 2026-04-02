@@ -52,14 +52,9 @@ def _load_segvigen_flow_model(model_config: dict, ckpt_path: str):
 
 
 def _get_interactive_checkpoint_path() -> str:
-    """Return path to the interactive SegviGen checkpoint."""
-    path = os.path.join(_get_models_dir(), "interactive_seg.ckpt")
-    if not os.path.isfile(path):
-        raise FileNotFoundError(
-            f"SegviGen interactive checkpoint not found: {path}\n"
-            "Download it from https://huggingface.co/fenghora/SegviGen"
-        )
-    return path
+    """Return path to the interactive SegviGen checkpoint, downloading if needed."""
+    from install import ensure_interactive_checkpoint
+    return ensure_interactive_checkpoint(_get_models_dir())
 
 
 def _load_interactive_checkpoint(model_config: dict, ckpt_path: str):
@@ -327,12 +322,12 @@ class SegviGenInteractiveSampler:
         import numpy as np
         import comfy.model_management as mm
         import comfy.model_patcher
-        from trellis2.samplers import FlowEulerGuidanceIntervalSampler
         from trellis2.modules import sparse as _sp
         from core.interactive import (
-            Gen3DSegInteractive, encode_single_point,
-            extract_binary_mask, merge_masks,
+            Gen3DSegInteractive, pack_point_tokens,
+            decode_seg_from_base_color, _decode_via_kmeans,
         )
+        from core.sampler import SegviGenFlowSampler
 
         check_interrupt()
 
@@ -349,6 +344,15 @@ class SegviGenInteractiveSampler:
             return ({"latent": None, "labels": None,
                      "voxel": slat.get("voxel"), "mesh": trimesh},)
 
+        # ── Soft source guard ────────────────────────────────────────────
+        if slat.get("source") != "full":
+            log.warning(
+                "SegviGen: SLAT has source='%s' (no tex_slat). "
+                "Interactive segmentation quality will be degraded. "
+                "For best results, connect SegviGenVoxelEncode with conditioning.",
+                slat.get("source", "unknown"),
+            )
+
         # ── Load interactive checkpoint ──────────────────────────────────
         ckpt_path = _get_interactive_checkpoint_path()
         device = mm.get_torch_device()
@@ -362,12 +366,10 @@ class SegviGenInteractiveSampler:
         )
 
         # Create Gen3DSegInteractive with token interleaving.
-        # Use .to(device) for device placement, then convert_to(dtype) for precision.
         # convert_to() mirrors SLatFlowModel's own __init__: only the 30 transformer
         # blocks are converted to bf16/fp16; input_layer, t_embedder, out_layer, and
         # pos_embedder stay in float32 so they match the float32 inputs/outputs of the
-        # sampler.  A plain .to(dtype) is too aggressive — it would convert everything
-        # including input_layer and out_layer, causing dtype mismatches.
+        # sampler.
         gen = Gen3DSegInteractive(flow_model, seg_embed)
         gen = gen.to(device=device)
         gen.flow_model.convert_to(dtype)   # blocks → bf16/fp16, fm.dtype updated
@@ -382,11 +384,12 @@ class SegviGenInteractiveSampler:
 
         torch.manual_seed(seed)
 
-        # ── Load normalization stats ──────────────────────────────────────
+        # ── Load normalization stats + rescale_t ─────────────────────────
         import json
         import folder_paths as _fp
         _pipeline_json = os.path.join(_fp.models_dir, "trellis2", "pipeline.json")
         _shape_mean = _shape_std = _tex_mean = _tex_std = None
+        _rescale_t = 1.0
         if os.path.isfile(_pipeline_json):
             with open(_pipeline_json) as _f:
                 _pcfg = json.load(_f).get("args", {})
@@ -398,7 +401,9 @@ class SegviGenInteractiveSampler:
             if _tn.get("mean") and _tn.get("std"):
                 _tex_mean = torch.tensor(_tn["mean"], device=device, dtype=torch.float32)
                 _tex_std  = torch.tensor(_tn["std"],  device=device, dtype=torch.float32)
-            log.info("SegviGen: loaded normalization stats from pipeline.json")
+            _rescale_t = float(_pcfg.get("rescale_t", 1.0))
+            log.info("SegviGen: loaded normalization stats from pipeline.json "
+                     f"(rescale_t={_rescale_t})")
         else:
             log.warning(
                 "SegviGen: pipeline.json not found — running WITHOUT shape normalization. "
@@ -417,24 +422,21 @@ class SegviGenInteractiveSampler:
         pos_cond = conditioning.get("cond_1024", conditioning["cond_512"])
         neg_cond = conditioning["neg_cond"]
 
-        def _to_device(c):
-            if isinstance(c, torch.Tensor):
-                return c.to(device=device, dtype=dtype)
-            if isinstance(c, list):
-                return [t.to(device=device, dtype=dtype)
-                        if isinstance(t, torch.Tensor) else t for t in c]
-            return c
-        pos_cond = _to_device(pos_cond)
-        neg_cond = _to_device(neg_cond)
+        def _to_device(obj, dev, dt=None):
+            """Move obj to device if it supports .to(), otherwise return as-is."""
+            if hasattr(obj, 'to'):
+                kwargs = {"device": dev}
+                if dt is not None:
+                    kwargs["dtype"] = dt
+                return obj.to(**kwargs)
+            return obj
 
-        sampler = FlowEulerGuidanceIntervalSampler(sigma_min=1e-5)
+        pos_cond = _to_device(pos_cond, device, dtype)
+        neg_cond = _to_device(neg_cond, device, dtype)
+
+        sampler_wrapper = SegviGenFlowSampler(sigma_min=1e-5)
 
         # ── Normalise shape_slat for concat_cond ─────────────────────────
-        # The flow model was trained with normalised shape_slat as concat_cond
-        # (per pipeline.json shape_slat_normalization stats).
-        # Using zeros (the old default) removes all geometry information and
-        # causes random output. Using the raw (un-normalised) shape_slat also
-        # produces poor results; proper z-score normalisation is essential.
         raw_shape_feats = slat_latent.feats.to(device=device, dtype=torch.float32)
         if _shape_mean is not None and _shape_std is not None:
             shape_normed_feats = (raw_shape_feats - _shape_mean) / _shape_std
@@ -444,93 +446,74 @@ class SegviGenInteractiveSampler:
                 f"norm_std={shape_normed_feats.std():.4f}"
             )
         else:
-            shape_normed_feats = raw_shape_feats  # fallback: use as-is
+            shape_normed_feats = raw_shape_feats
         shape_cond = _sp.SparseTensor(
             feats=shape_normed_feats,
             coords=coords,
         ) if cond_ch > 0 else None
 
-        # ── tex_proxy: zero-filled SparseTensor at same coords ────────────
-        # The upstream model expects a 2N interleaved sequence:
-        #   rows 0..N-1  = noise (what gets denoised)
-        #   rows N..2N-1 = tex_slat (original texture context)
-        # We don't have the tex encoder, so we use zeros as a proxy.
-        # This is better than the old N-token approach because:
-        #   (a) the transformer attention structure matches training, and
-        #   (b) non-zero shape_cond provides geometry conditioning for both halves.
-        tex_proxy = _sp.SparseTensor(
-            feats=torch.zeros(len(coords), noise_ch, device=device, dtype=torch.float32),
+        # ── tex_slat: use real tex_slat if available, else zero proxy ────
+        tex_slat_raw = slat.get("tex_slat")
+        if tex_slat_raw is not None:
+            # Re-normalize: _sample_tex_slat returns denormalized (feats * std + mean)
+            # The sampler expects normalized values
+            raw_tex_feats = tex_slat_raw.feats.to(device=device, dtype=torch.float32)
+            if _tex_mean is not None and _tex_std is not None:
+                tex_normed_feats = (raw_tex_feats - _tex_mean) / _tex_std
+            else:
+                tex_normed_feats = raw_tex_feats
+            tex_slat_normed = _sp.SparseTensor(
+                feats=tex_normed_feats,
+                coords=tex_slat_raw.coords.to(device),
+            )
+            log.info("SegviGen: using real tex_slat for 2N interleaving")
+        else:
+            # Fallback: zero-filled proxy (degraded quality)
+            tex_slat_normed = _sp.SparseTensor(
+                feats=torch.zeros(len(coords), noise_ch, device=device, dtype=torch.float32),
+                coords=coords,
+            )
+            log.info("SegviGen: using zero tex_proxy (no real tex_slat available)")
+
+        # ── Pack all points into single input_points dict ────────────────
+        input_pts = pack_point_tokens(points, voxel_resolution, device=str(device))
+        log.info(f"SegviGen interactive: {len(points)} points packed, "
+                 f"{steps} steps, cfg={guidance_strength}")
+
+        # ── Single forward pass with all points ──────────────────────────
+        noise = _sp.SparseTensor(
+            feats=torch.randn(len(coords), noise_ch,
+                              device=device, dtype=torch.float32),
             coords=coords,
         )
 
-        # ── Per-point inference loop (sequential mode) ───────────────────
-        masks_and_scores = []
-        total = len(points)
-        last_result = None
-
-        log.info(f"SegviGen interactive: {total} points, {steps} steps each")
-
-        for i, point in enumerate(points):
-            log.info(f"SegviGen interactive: point {i+1}/{total} at {point}")
-            check_interrupt()
-
-            # Fresh noise for each point run (float32 — see shape_cond comment above).
-            noise = _sp.SparseTensor(
-                feats=torch.randn(len(coords), noise_ch,
-                                  device=device, dtype=torch.float32),
-                coords=coords,
-            )
-
-            # Encode single point as input_points dict
-            input_pts = encode_single_point(
-                point, voxel_resolution, device=str(device)
-            )
-
-            extra = {}
-            if shape_cond is not None:
-                extra["concat_cond"] = shape_cond
-            extra["tex_slats"] = tex_proxy
-
-            result = sampler.sample(
-                gen, noise,
-                cond=pos_cond, neg_cond=neg_cond,
-                steps=steps,
-                guidance_strength=guidance_strength,
-                guidance_interval=(guidance_interval_start,
-                                   guidance_interval_end),
-                verbose=True,
-                tqdm_desc=f"SegviGen pt {i+1}/{total}",
-                input_points=input_pts,
-                **extra,
-            )
-            last_result = result
-
-            # Extract binary mask from 32-channel latent output.
-            # Pass voxel coords and click position so extract_binary_mask can
-            # use K-means + spatial click selection (robust even when the model
-            # output is unimodal / not bimodal).
-            feats_np = result.samples.feats.cpu().float().numpy()
-            feat_coords_np = result.samples.coords[:, 1:].cpu().numpy().astype(np.int32)
-            click_voxel = np.array([point[0], point[1], point[2]], dtype=np.float32)
-            mask, scores = extract_binary_mask(
-                feats_np,
-                coords_np=feat_coords_np,
-                click_voxel=click_voxel,
-            )
-            masks_and_scores.append((mask, scores))
-
-            fg_pct = mask.mean() * 100
-            log.info(f"SegviGen: point {i+1} → {fg_pct:.1f}% foreground")
-
-        # ── Merge all binary masks into multi-label grid ─────────────────
-        # grid_resolution=64 keeps the label array small (64³ = 256 KB)
-        # even when coords are in 512-res space (512³ would be 512 MB).
-        labels = merge_masks(
-            masks_and_scores, coords_np,
-            voxel_resolution=voxel_resolution,
-            grid_resolution=min(voxel_resolution, 64),
+        result = sampler_wrapper.sample(
+            gen, noise,
+            cond=pos_cond, neg_cond=neg_cond,
+            steps=steps,
+            guidance_strength=guidance_strength,
+            guidance_rescale=guidance_rescale,
+            guidance_interval=(guidance_interval_start, guidance_interval_end),
+            rescale_t=_rescale_t,
+            input_points=input_pts,
+            concat_cond=shape_cond,
+            tex_slats=tex_slat_normed,
         )
 
+        # ── Label extraction ─────────────────────────────────────────────
+        subs = slat.get("subs")
+        grid_res = min(voxel_resolution, 64)
+        if subs is not None:
+            labels = decode_seg_from_base_color(
+                result.samples, subs,
+                coords_np, voxel_resolution,
+                grid_resolution=grid_res,
+            )
+        else:
+            labels = _decode_via_kmeans(
+                result.samples, coords_np, grid_res,
+            )
+
         mm.soft_empty_cache()
-        return ({"latent": last_result.samples, "labels": labels,
+        return ({"latent": result.samples, "labels": labels,
                  "voxel": slat.get("voxel"), "mesh": trimesh},)

@@ -234,6 +234,179 @@ def encode_single_point(
     return {'coords': coords.to(device), 'labels': labels.to(device)}
 
 
+# ─── Multi-point packing ────────────────────────────────────────────────────
+
+def pack_point_tokens(
+    points_list: list,
+    voxel_resolution: int,
+    device: str = "cpu",
+) -> dict:
+    """
+    Pack up to 10 click points into a single input_points dict for
+    Gen3DSegInteractive. Replaces the per-click encode_single_point loop.
+
+    Returns dict with:
+        'coords': [10, 4] int32 — active points + zero-padded
+        'labels': [10, 1] int32 — 1=active, 0=padding
+    """
+    MAX = Gen3DSegInteractive.MAX_POINTS  # 10
+    if len(points_list) > MAX:
+        log.warning(
+            f"SegviGen: {len(points_list)} points provided, truncating to {MAX}"
+        )
+        points_list = points_list[:MAX]
+
+    R = voxel_resolution
+    coords = torch.zeros(MAX, 4, dtype=torch.int32, device=device)
+    labels = torch.zeros(MAX, 1, dtype=torch.int32, device=device)
+
+    for i, pt in enumerate(points_list):
+        px = max(0, min(R - 1, int(round(pt[0]))))
+        py = max(0, min(R - 1, int(round(pt[1]))))
+        pz = max(0, min(R - 1, int(round(pt[2]))))
+        coords[i] = torch.tensor([0, px, py, pz], dtype=torch.int32)
+        labels[i] = 1
+
+    return {'coords': coords.to(device), 'labels': labels.to(device)}
+
+
+# ─── K-means decode fallback ────────────────────────────────────────────────
+
+def _decode_via_kmeans(seg_latent, coords_np, grid_resolution=64):
+    """
+    Decode segmentation latent to label grid via K-means clustering.
+
+    Fallback path when _decode_tex_slat is unavailable.
+    Extracted from SegviGenFullSampler.sample() lines 248-271.
+    """
+    from sklearn.cluster import MiniBatchKMeans
+
+    feats = seg_latent.feats.cpu().float().numpy()
+    seg_coords = seg_latent.coords[:, 1:].cpu().numpy().astype(np.int32)
+    G = grid_resolution
+
+    n_parts = 4
+    k = min(n_parts, max(2, len(feats) // 10))
+    km = MiniBatchKMeans(n_clusters=k, n_init=5, random_state=0)
+    cluster_ids = km.fit_predict(feats)
+
+    # Build [G,G,G] label grid (1-based: cluster 0 -> label 1, etc.)
+    vr = max(seg_coords.max() + 1, 1) if len(seg_coords) > 0 else G
+    scale = vr / G
+    labels = np.zeros((G, G, G), dtype=np.int32)
+    for j, (x, y, z) in enumerate(seg_coords):
+        gx = min(int(x / scale), G - 1)
+        gy = min(int(y / scale), G - 1)
+        gz = min(int(z / scale), G - 1)
+        if gx >= 0 and gy >= 0 and gz >= 0:
+            labels[gx, gy, gz] = int(cluster_ids[j]) + 1
+
+    log.info(f"SegviGen: K-means decode — {k} clusters, "
+             f"{len(np.unique(cluster_ids))} segments (grid {G}^3)")
+    return labels
+
+
+# ─── Tex-decode-based segmentation ─────────────────────────────────────────
+
+def decode_seg_from_base_color(seg_latent, subs, coords_np,
+                                voxel_resolution, grid_resolution=64):
+    """
+    Decode segmentation latent via _decode_tex_slat -> base_color thresholding.
+
+    Primary path: denormalize seg_latent using tex_slat_normalization stats from
+    pipeline.json, then call _decode_tex_slat(seg_latent, subs) to get PBR voxels,
+    threshold base_color luminance for binary mask.
+    Fallback: K-means on raw latent features.
+
+    AUDIT C1: _decode_tex_slat expects DENORMALIZED input (stages.py applies
+    slat * std + mean before decoding). The sampler output is normalized, so we
+    must denormalize here before decoding.
+
+    AUDIT H1: Runtime channel check — if seg_latent channels don't match the tex
+    decoder's expected input, fall back to K-means immediately.
+    """
+    try:
+        import torch
+        from core.trellis2_shim import load_trellis2_stages
+        stages = load_trellis2_stages()
+        stages._init_config()
+
+        # --- AUDIT H1: channel compatibility check ---
+        expected_ch = stages._pipeline_config.get("models", {}).get(
+            "tex_slat_flow_model_512", {}
+        ).get("out_channels", None)
+        actual_ch = seg_latent.feats.shape[1] if seg_latent.feats.dim() >= 2 else 0
+        if expected_ch is not None and actual_ch != expected_ch:
+            log.warning(
+                "SegviGen: channel mismatch — seg_latent has %d channels, "
+                "tex decoder expects %d; falling back to K-means",
+                actual_ch, expected_ch,
+            )
+            return _decode_via_kmeans(seg_latent, coords_np, grid_resolution)
+
+        # --- AUDIT C1: denormalize seg_latent before decoding ---
+        denormed_latent = seg_latent  # default: pass through if no stats
+        try:
+            norm_stats = stages._pipeline_config.get("tex_slat_normalization")
+            if norm_stats is not None:
+                tex_mean = torch.tensor(
+                    norm_stats["mean"], device=seg_latent.feats.device,
+                    dtype=seg_latent.feats.dtype,
+                )
+                tex_std = torch.tensor(
+                    norm_stats["std"], device=seg_latent.feats.device,
+                    dtype=seg_latent.feats.dtype,
+                )
+                denormed_feats = seg_latent.feats * tex_std + tex_mean
+                # Reconstruct SparseTensor with denormalized features
+                from trellis2.representations import SparseTensor as _SparseTensor
+                denormed_latent = _SparseTensor(
+                    feats=denormed_feats, coords=seg_latent.coords,
+                )
+                log.debug("SegviGen: denormalized seg_latent for tex decode")
+            else:
+                log.warning(
+                    "SegviGen: tex_slat_normalization not in pipeline.json; "
+                    "passing raw latent to decoder (may produce incorrect colors)"
+                )
+        except Exception as e_norm:
+            log.warning(
+                "SegviGen: denormalization failed (%s); falling back to K-means",
+                e_norm,
+            )
+            return _decode_via_kmeans(seg_latent, coords_np, grid_resolution)
+
+        # _decode_tex_slat returns BATCHED SparseTensor with 6-ch PBR attrs
+        # Must index [0] for batch 0 (same as run_texture_generation stages.py:963)
+        # base_color = feats[:, 0:3], range [0, 1]
+        decoded_batched = stages._decode_tex_slat(denormed_latent, subs)
+        decoded = decoded_batched[0]  # batch 0
+        base_color = decoded.feats[:, 0:3].cpu().float().numpy()
+
+        # Luminance threshold: selected part = white, rest = black
+        luminance = base_color.mean(axis=1)  # [N]
+        mask = luminance > 0.5
+
+        # Build label grid
+        G = grid_resolution
+        scale = voxel_resolution / G
+        labels = np.zeros((G, G, G), dtype=np.int32)
+        seg_coords = decoded.coords[:, 1:].cpu().numpy().astype(np.int32)
+        scaled = np.clip((seg_coords / scale).astype(np.int32), 0, G - 1)
+
+        for j in range(len(mask)):
+            x, y, z = scaled[j]
+            labels[x, y, z] = 1 if mask[j] else 2  # 1=selected, 2=rest
+
+        log.info(f"SegviGen: decoded via _decode_tex_slat — "
+                 f"{mask.sum()}/{len(mask)} voxels selected")
+        return labels
+
+    except Exception as e:
+        log.warning(f"SegviGen: _decode_tex_slat failed ({e}); falling back to K-means")
+        return _decode_via_kmeans(seg_latent, coords_np, grid_resolution)
+
+
 # ─── Binary mask extraction ─────────────────────────────────────────────────
 
 def extract_binary_mask(

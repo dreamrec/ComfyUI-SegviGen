@@ -1,8 +1,8 @@
 """
 SegviGen voxel pipeline nodes:
   - SegviGenGLBtoVoxel: mesh → SEGVIGEN_VOXEL
-  - SegviGenVoxelEncode: SEGVIGEN_VOXEL → SEGVIGEN_SLAT (legacy, zero features)
-  - SegviGenFromShapeResult: TRELLIS2_SHAPE_RESULT → SEGVIGEN_SLAT (correct path)
+  - SegviGenVoxelEncode: TRELLIS2_SHAPE_RESULT + CONDITIONING → SEGVIGEN_SLAT (shape + tex)
+  - SegviGenFromShapeResult: TRELLIS2_SHAPE_RESULT → SEGVIGEN_SLAT (shape only)
 """
 import logging
 
@@ -128,12 +128,12 @@ class SegviGenGLBtoVoxel:
 
 class SegviGenVoxelEncode:
     """
-    Encode a voxel grid into a SLAT latent using SegviGen's bundled SLAT encoder.
+    Encode TRELLIS2 shape result + conditioning into a SEGVIGEN_SLAT with real
+    shape_slat and tex_slat.
 
-    IMPORTANT: This uses SegviGen's own encoder model (downloaded via install.py),
-    NOT a TRELLIS2 stage function. stages.py does not expose voxel encoding.
-    The SegviGen checkpoint bundle includes a shape SLAT encoder separate from
-    TRELLIS2's shape generation pipeline.
+    Uses TRELLIS2's _sample_tex_slat() via stage shim to produce real tex_slat
+    from shape_slat + conditioning. Falls back to source="shape_only" if tex
+    sampling fails.
     """
 
     CATEGORY = "SegviGen"
@@ -148,74 +148,67 @@ class SegviGenVoxelEncode:
                 "model_config": ("TRELLIS2_MODEL_CONFIG", {
                     "tooltip": "Config from Load TRELLIS2 Models node",
                 }),
-                "voxel": ("SEGVIGEN_VOXEL",),
+                "shape_result": ("TRELLIS2_SHAPE_RESULT", {
+                    "tooltip": "Connect the shape_result output from TRELLIS2 Image-to-Shape node.",
+                }),
+                "conditioning": ("TRELLIS2_CONDITIONING", {
+                    "tooltip": "Connect the conditioning output from TRELLIS2 conditioning node.",
+                }),
+            },
+            "optional": {
+                "seed": ("INT", {"default": 0, "min": 0, "max": 2**31 - 1,
+                    "tooltip": "Random seed for texture sampling.",
+                }),
+                "tex_guidance_strength": ("FLOAT", {
+                    "default": 7.5, "min": 0.0, "max": 20.0, "step": 0.1,
+                    "tooltip": "CFG strength for texture flow model.",
+                }),
+                "tex_sampling_steps": ("INT", {
+                    "default": 12, "min": 1, "max": 50,
+                    "tooltip": "Number of sampling steps for texture generation.",
+                }),
             },
         }
 
-    def encode(self, model_config: dict, voxel: dict):
-        import struct
-        import json
-        import numpy as np
-        import torch
+    def encode(self, model_config: dict, shape_result: dict, conditioning: dict,
+               seed: int = 0, tex_guidance_strength: float = 7.5,
+               tex_sampling_steps: int = 12):
         import comfy.model_management as mm
-        import folder_paths
-        import os
-        import sys
+        from core.encode import extract_shape_data, sample_tex_slat
 
         check_interrupt()
 
-        # ── resolve SparseTensor from TRELLIS2 ──────────────────────────
-        _trellis2_nodes = None
-        for p in sys.path:
-            candidate = os.path.join(p, "trellis2", "sparse", "__init__.py")
-            if os.path.isfile(candidate):
-                _trellis2_nodes = p
-                break
-        if _trellis2_nodes is None:
-            # common path relative to this file
-            _trellis2_nodes = os.path.normpath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "ComfyUI-TRELLIS2", "nodes")
+        device = str(mm.get_torch_device())
+        shape_slat, subs, resolution, pipeline_type = extract_shape_data(
+            shape_result, device
+        )
+
+        try:
+            tex_slat = sample_tex_slat(
+                shape_result, conditioning, device,
+                seed=seed,
+                tex_guidance_strength=tex_guidance_strength,
+                tex_sampling_steps=tex_sampling_steps,
             )
-            if _trellis2_nodes not in sys.path:
-                sys.path.insert(0, _trellis2_nodes)
-        from trellis2.sparse import SparseTensor
+            source = "full"
+            log.info(
+                f"SegviGen: encode complete — source=full, "
+                f"shape_slat={shape_slat.feats.shape}, tex_slat={tex_slat.feats.shape}"
+            )
+        except Exception as e:
+            log.warning(f"SegviGen: tex sampling failed ({e}); using shape_only mode")
+            tex_slat = None
+            subs = None
+            source = "shape_only"
 
-        # ── read in_channels from safetensors header (no full load) ─────
-        ckpt_path = os.path.join(folder_paths.models_dir, "segvigen", "full_seg.safetensors")
-        if not os.path.exists(ckpt_path):
-            raise FileNotFoundError(f"SegviGen checkpoint not found: {ckpt_path}")
-        with open(ckpt_path, "rb") as _f:
-            _header_size = struct.unpack("<Q", _f.read(8))[0]
-            _header = json.loads(_f.read(_header_size))
-        # out_layer maps model_channels → out_channels (the denoising latent dim).
-        # in_channels = out_channels + concat_cond_channels; noise is only out_channels.
-        in_channels = _header["flow_model.out_layer.weight"]["shape"][0]
-
-        # ── build SparseTensor from voxel occupancy ──────────────────────
-        grid = voxel["grid"]               # bool np.ndarray [R, R, R]
-        coords_np = np.argwhere(grid).astype(np.int32)  # [N, 3]
-        if len(coords_np) == 0:
-            raise ValueError("SegviGenVoxelEncode: voxel grid is empty")
-
-        device = mm.get_torch_device()
-        dtype_str = model_config.get("dtype", "fp16")
-        dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[dtype_str]
-
-        # coords: [N, 4] (batch_idx=0, x, y, z)
-        batch_col = np.zeros((len(coords_np), 1), dtype=np.int32)
-        coords = torch.from_numpy(np.concatenate([batch_col, coords_np], axis=1)).to(device)
-
-        # Zero features — sampler's _add_noise turns this into pure Gaussian noise
-        feats = torch.zeros(len(coords), in_channels, dtype=dtype, device=device)
-        latent = SparseTensor(feats=feats, coords=coords)
-
-        # Propagate resolution so downstream nodes don't default to 64
-        voxel_with_res = dict(voxel)
-        voxel_with_res["resolution"] = int(grid.shape[0])
-
-        log.info(f"SegviGen: encoded {len(coords)} voxels → SLAT ({in_channels}ch, R={grid.shape[0]})")
         mm.soft_empty_cache()
-        return ({"latent": latent, "voxel": voxel_with_res},)
+        return ({
+            "latent": shape_slat,
+            "tex_slat": tex_slat,
+            "subs": subs,
+            "voxel": {"resolution": resolution},
+            "source": source,
+        },)
 
 
 class SegviGenFromShapeResult:
@@ -306,4 +299,5 @@ class SegviGenFromShapeResult:
             f"feature_norm={shape_slat.feats.norm(dim=-1).mean():.4f}"
         )
         mm.soft_empty_cache()
-        return ({"latent": shape_slat, "voxel": {"resolution": resolution}},)
+        return ({"latent": shape_slat, "voxel": {"resolution": resolution},
+                 "source": "shape_only", "tex_slat": None, "subs": None},)
