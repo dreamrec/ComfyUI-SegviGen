@@ -12,6 +12,21 @@ log = logging.getLogger("segvigen")
 
 _SEGVIGEN_MODELS_DIR = None
 
+# ── Interactive sampler cache ────────────────────────────────────────────────
+# Avoids re-loading the model and re-normalizing tex_slat when only the
+# click points change between runs. Keyed on (slat_id, conditioning_id).
+_interactive_cache = {
+    "key": None,
+    "gen": None,
+    "patcher": None,
+    "shape_cond": None,
+    "tex_slat_normed": None,
+    "coords": None,
+    "coords_np": None,
+    "noise_ch": None,
+    "voxel_resolution": None,
+}
+
 
 def _get_models_dir() -> str:
     global _SEGVIGEN_MODELS_DIR
@@ -71,7 +86,7 @@ def _load_interactive_checkpoint(model_config: dict, ckpt_path: str):
     import torch
     from core.pipeline import get_flow_model
 
-    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     sd = ckpt["state_dict"]
 
     # Strip 'gen3dseg.flow_model.' prefix → bare SLatFlowModel keys
@@ -410,34 +425,38 @@ class SegviGenInteractiveSampler:
                 "Interactive segmentation quality will be degraded.",
             )
 
-        # ── Load interactive checkpoint ──────────────────────────────────
+        # ── Load interactive checkpoint (cached across point reruns) ────
         ckpt_path = _get_interactive_checkpoint_path()
         device = mm.get_torch_device()
         dtype_str = model_config.get("dtype", "fp16")
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                  "fp32": torch.float32}[dtype_str]
 
-        log.info(f"SegviGen: loading interactive model from {ckpt_path}")
-        flow_model, seg_embed = _load_interactive_checkpoint(
-            model_config, ckpt_path
-        )
+        cache_key = (ckpt_path, dtype_str)
+        if _interactive_cache["key"] == cache_key and _interactive_cache["gen"] is not None:
+            gen = _interactive_cache["gen"]
+            patcher = _interactive_cache["patcher"]
+            mm.load_models_gpu([patcher])
+            log.info("SegviGen: reusing cached interactive model (points-only rerun)")
+        else:
+            log.info(f"SegviGen: loading interactive model from {ckpt_path}")
+            flow_model, seg_embed = _load_interactive_checkpoint(
+                model_config, ckpt_path
+            )
+            gen = Gen3DSegInteractive(flow_model, seg_embed)
+            gen = gen.to(device=device)
+            gen.flow_model.convert_to(dtype)
+            gen.eval()
 
-        # Create Gen3DSegInteractive with token interleaving.
-        # convert_to() mirrors SLatFlowModel's own __init__: only the 30 transformer
-        # blocks are converted to bf16/fp16; input_layer, t_embedder, out_layer, and
-        # pos_embedder stay in float32 so they match the float32 inputs/outputs of the
-        # sampler.
-        gen = Gen3DSegInteractive(flow_model, seg_embed)
-        gen = gen.to(device=device)
-        gen.flow_model.convert_to(dtype)   # blocks → bf16/fp16, fm.dtype updated
-        gen.eval()
+            patcher = comfy.model_patcher.ModelPatcher(
+                gen, load_device=device,
+                offload_device=mm.unet_offload_device(),
+            )
+            mm.load_models_gpu([patcher])
 
-        # Use ModelPatcher for VRAM management
-        patcher = comfy.model_patcher.ModelPatcher(
-            gen, load_device=device,
-            offload_device=mm.unet_offload_device(),
-        )
-        mm.load_models_gpu([patcher])
+            _interactive_cache["key"] = cache_key
+            _interactive_cache["gen"] = gen
+            _interactive_cache["patcher"] = patcher
 
         torch.manual_seed(seed)
 
