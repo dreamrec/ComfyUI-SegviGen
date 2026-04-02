@@ -2,16 +2,24 @@
 SegviGenPointInput: specify up to 10 voxel-space click coordinates.
 
 Output SEGVIGEN_POINTS is a list of [x, y, z] int triples.
-The max widget value is 127 (covers 128^3 grids).
-Values are clamped to the actual grid size at runtime in encode_points_for_sampler.
+All coordinates are in canonical 512-space (0..511). The sampler clamps
+to the actual voxel_resolution at runtime via pack_point_tokens.
 """
 import logging
 
 log = logging.getLogger("segvigen")
 
+# Canonical coordinate space — all points are in 512-res space
+_CANONICAL_RES = 512
+
 
 class SegviGenPointInput:
-    """Define voxel-space click coordinates for interactive segmentation."""
+    """Define voxel-space click coordinates for interactive segmentation.
+
+    All coordinates are in canonical 512-space (0..511), matching the
+    TRELLIS2 shape generation resolution. The picker and manual entry
+    share the same coordinate system.
+    """
 
     CATEGORY = "SegviGen"
     FUNCTION = "build_points"
@@ -21,8 +29,8 @@ class SegviGenPointInput:
     @classmethod
     def INPUT_TYPES(cls):
         coord_widget = lambda: ("INT", {
-            "default": 32, "min": 0, "max": 127, "step": 1,
-            "tooltip": "Voxel coordinate. Valid range: 0 to (voxel_resolution - 1).",
+            "default": 256, "min": 0, "max": _CANONICAL_RES - 1, "step": 1,
+            "tooltip": "Voxel coordinate in 512-space (0–511).",
         })
         return {
             "required": {

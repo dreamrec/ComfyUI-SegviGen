@@ -37,7 +37,7 @@ def test_package_imports():
     sys.modules["comfyui_segvigen"] = m
     spec.loader.exec_module(m)
     assert m.NODE_CLASS_MAPPINGS is not None
-    assert len(m.NODE_CLASS_MAPPINGS) == 13
+    assert len(m.NODE_CLASS_MAPPINGS) == 16
 
 
 def test_type_strings_are_consistent():

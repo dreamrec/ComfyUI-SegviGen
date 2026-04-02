@@ -1,13 +1,13 @@
 [project]
 name = "ComfyUI-SegviGen"
-description = "ComfyUI nodes for SegviGen 3D part segmentation (full + interactive modes)"
-version = "0.1.0"
+description = "ComfyUI nodes for SegviGen 3D mesh part segmentation — interactive + full modes via TRELLIS2 bridge"
+version = "3.0.0"
 license = "MIT"
 requires-python = ">=3.10"
 readme = "README.md"
 
 [project.urls]
-Repository = "https://github.com/your-repo/ComfyUI-SegviGen"
+Repository = "https://github.com/dreamrec/ComfyUI-SegviGen"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
