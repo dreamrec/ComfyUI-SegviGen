@@ -240,10 +240,27 @@ def pack_point_tokens(
     points_list: list,
     voxel_resolution: int,
     device: str = "cpu",
+    slat_coords: "torch.Tensor" = None,
 ) -> dict:
     """
     Pack up to 10 click points into a single input_points dict for
-    Gen3DSegInteractive. Replaces the per-click encode_single_point loop.
+    Gen3DSegInteractive.
+
+    Upstream fidelity: the original inference_interactive.py maps click
+    coordinates through tex_encoder to get latent-space coordinates. Since
+    the bridge path has no tex_encoder, we approximate by snapping each
+    click point to the nearest occupied coordinate in the SLAT's own
+    coordinate space (slat_coords). This ensures point tokens are injected
+    at valid latent positions rather than arbitrary voxel grid locations.
+
+    Args:
+        points_list: list of [x, y, z] click coordinates in 512-space
+        voxel_resolution: coordinate space resolution (typically 512)
+        device: torch device string
+        slat_coords: [N, 4] int32 tensor of SLAT occupied coordinates
+            (batch_idx, x, y, z). When provided, each click is snapped
+            to the nearest occupied SLAT coordinate. When None, raw
+            clamped coordinates are used (legacy behavior).
 
     Returns dict with:
         'coords': [10, 4] int32 — active points + zero-padded
@@ -260,11 +277,31 @@ def pack_point_tokens(
     coords = torch.zeros(MAX, 4, dtype=torch.int32, device=device)
     labels = torch.zeros(MAX, 1, dtype=torch.int32, device=device)
 
+    # Pre-compute SLAT coordinate lookup for nearest-neighbor snapping
+    slat_xyz = None
+    if slat_coords is not None and slat_coords.shape[0] > 0:
+        slat_xyz = slat_coords[:, 1:].float().cpu()  # [N, 3]
+
     for i, pt in enumerate(points_list):
         px = max(0, min(R - 1, int(round(pt[0]))))
         py = max(0, min(R - 1, int(round(pt[1]))))
         pz = max(0, min(R - 1, int(round(pt[2]))))
-        coords[i] = torch.tensor([0, px, py, pz], dtype=torch.int32)
+
+        if slat_xyz is not None:
+            # Snap to nearest occupied SLAT coordinate (L2 distance)
+            click = torch.tensor([px, py, pz], dtype=torch.float32)
+            dists = (slat_xyz - click.unsqueeze(0)).pow(2).sum(dim=1)
+            nearest_idx = int(dists.argmin())
+            snapped = slat_coords[nearest_idx].to(dtype=torch.int32)
+            coords[i] = snapped
+            if (px, py, pz) != tuple(snapped[1:].tolist()):
+                log.debug(
+                    f"SegviGen: click ({px},{py},{pz}) snapped to "
+                    f"SLAT coord ({snapped[1]},{snapped[2]},{snapped[3]})"
+                )
+        else:
+            coords[i] = torch.tensor([0, px, py, pz], dtype=torch.int32)
+
         labels[i] = 1
 
     return {'coords': coords.to(device), 'labels': labels.to(device)}

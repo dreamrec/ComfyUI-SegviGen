@@ -41,19 +41,36 @@ def _load_segvigen_flow_model(model_config: dict, ckpt_path: str):
     """
     Load SegviGen's SLatFlowModel from checkpoint and wrap it for ComfyUI.
 
-    The checkpoint was saved from a Gen3DSeg wrapper, so all keys have a
-    'flow_model.' prefix that must be stripped before loading into the bare
-    SLatFlowModel.  The model is then wrapped in ComfyCompatFlowModel so
-    ComfyUI's ModelPatcher can set `model.device` without hitting the
-    read-only @property on SLatFlowModel.
+    Supports both formats:
+      - .safetensors (legacy Aero-Ex): keys are 'flow_model.*'
+      - .ckpt (fenghora PyTorch Lightning): keys are in state_dict['gen3dseg.flow_model.*']
+
+    The model is wrapped in ComfyCompatFlowModel so ComfyUI's ModelPatcher
+    can set `model.device` without hitting the read-only @property.
     """
-    import safetensors.torch
+    import torch
     from core.pipeline import get_flow_model, ComfyCompatFlowModel
 
     flow_model = get_flow_model(model_config)
-    sd = safetensors.torch.load_file(ckpt_path, device="cpu")
-    stripped = {k[len("flow_model."):]: v
-                for k, v in sd.items() if k.startswith("flow_model.")}
+
+    if ckpt_path.endswith(".safetensors"):
+        import safetensors.torch
+        sd = safetensors.torch.load_file(ckpt_path, device="cpu")
+        # Aero-Ex safetensors: keys are 'flow_model.*'
+        stripped = {k[len("flow_model."):]: v
+                    for k, v in sd.items() if k.startswith("flow_model.")}
+    else:
+        # fenghora .ckpt (PyTorch Lightning): keys are 'gen3dseg.flow_model.*'
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+        sd = ckpt.get("state_dict", ckpt)
+        stripped = {}
+        for k, v in sd.items():
+            if k.startswith("gen3dseg.flow_model."):
+                stripped[k[len("gen3dseg.flow_model."):]] = v
+            elif k.startswith("flow_model."):
+                stripped[k[len("flow_model."):]] = v
+        del ckpt
+
     flow_model.load_state_dict(stripped, strict=False)
     del sd, stripped
     flow_model.eval()
@@ -546,7 +563,10 @@ class SegviGenInteractiveSampler:
             log.info("SegviGen: using zero tex_proxy (no real tex_slat available)")
 
         # ── Pack all points into single input_points dict ────────────────
-        input_pts = pack_point_tokens(points, voxel_resolution, device=str(device))
+        input_pts = pack_point_tokens(
+            points, voxel_resolution, device=str(device),
+            slat_coords=coords,  # snap clicks to nearest SLAT coordinates
+        )
         log.info(f"SegviGen interactive: {len(points)} points packed, "
                  f"{steps} steps, cfg={guidance_strength}")
 

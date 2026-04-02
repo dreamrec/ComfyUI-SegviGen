@@ -15,7 +15,7 @@ This repo is in active recovery toward **upstream SegviGen paper fidelity**. Her
 
 **Architecture:** The repo currently supports one input path (TRELLIS2 image-to-shape bridge) with plans for a second (asset-native mesh encoding). Both converge into the same sampler and export pipeline. See `docs/superpowers/plans/2026-04-02-upstream-faithful-development-roadmap.md` for the full plan.
 
-**Checkpoints:** Interactive mode uses `fenghora/SegviGen` (interactive_seg.ckpt). Full mode uses `Aero-Ex/SegviGen` (full_seg.safetensors) but will migrate to `fenghora/SegviGen` when the full sampler is rewritten.
+**Checkpoints:** All faithful modes use `fenghora/SegviGen` — interactive_seg.ckpt (interactive), full_seg.ckpt (full auto), full_seg_w_2d_map.ckpt (2D-guided). The legacy Aero-Ex/SegviGen safetensors checkpoint is supported as a fallback only. All checkpoint sha256 hashes are verified at download time.
 
 ## Requirements
 
