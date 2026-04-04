@@ -34,7 +34,7 @@ SEGMENT_COLORS = np.array([
 ], dtype=np.uint8)
 
 
-_MAX_PREVIEW_FACES = 30_000  # matplotlib hangs above ~50k; keep well under that
+_MAX_PREVIEW_FACES = 100_000  # PIL painter handles 100k fine; only matplotlib hangs above 50k
 
 
 def render_segmentation_preview(
@@ -118,8 +118,9 @@ def _apply_label_colors(mesh, labels):
     """
     Color mesh faces by segment label.
 
-    Uses _voxel_labels_to_face_labels (centroid-based lookup) to map
-    the [R,R,R] voxel label grid to per-face labels.
+    Uses _voxel_labels_to_face_labels (centroid-based lookup + KD-tree)
+    to map the [R,R,R] voxel label grid to per-face labels. Any remaining
+    unlabeled faces get the majority label of their mesh neighbors.
     """
     import trimesh
     if not isinstance(mesh, trimesh.Trimesh):
@@ -135,10 +136,14 @@ def _apply_label_colors(mesh, labels):
     if labels is not None and n_faces > 0:
         try:
             face_labels = _voxel_labels_to_face_labels(mesh, labels)
-            # Vectorized: color all faces with label > 0
+
+            # Flood-fill remaining unlabeled faces from labeled neighbors
+            still_unlabeled = (face_labels == 0).sum()
+            if still_unlabeled > 0 and still_unlabeled < n_faces:
+                face_labels = _flood_fill_labels(mesh, face_labels)
+
             fg_mask = face_labels > 0
             if fg_mask.any():
-                # Labels are 1-based (BFS assigns 1,2,3...; 0=background).
                 color_idx = (face_labels[fg_mask] - 1) % len(SEGMENT_COLORS)
                 face_colors[fg_mask, :3] = SEGMENT_COLORS[color_idx]
             log.info(f"SegviGen renderer: {int(fg_mask.sum())}/{n_faces} faces colored "
@@ -149,6 +154,65 @@ def _apply_label_colors(mesh, labels):
     colored = mesh.copy()
     colored.visual = trimesh.visual.ColorVisuals(face_colors=face_colors)
     return colored
+
+
+def _flood_fill_labels(mesh, face_labels, max_iters=10):
+    """
+    Propagate labels from labeled faces to unlabeled neighbors via
+    face adjacency. Uses vectorized sparse adjacency for speed.
+    """
+    from scipy import sparse as sp_sparse
+
+    try:
+        adj = mesh.face_adjacency  # [E, 2]
+    except Exception:
+        return face_labels
+
+    n = len(face_labels)
+    # Build sparse adjacency matrix
+    row = np.concatenate([adj[:, 0], adj[:, 1]])
+    col = np.concatenate([adj[:, 1], adj[:, 0]])
+    adj_matrix = sp_sparse.csr_matrix(
+        (np.ones(len(row), dtype=np.int32), (row, col)),
+        shape=(n, n),
+    )
+
+    labels = face_labels.copy()
+    for iteration in range(max_iters):
+        unlabeled = labels == 0
+        n_unlabeled = unlabeled.sum()
+        if n_unlabeled == 0:
+            break
+
+        # For each unlabeled face, find the most common label among neighbors
+        new_labels = labels.copy()
+        unlabeled_idx = np.where(unlabeled)[0]
+
+        for fi in unlabeled_idx:
+            neighbors = adj_matrix[fi].indices
+            if len(neighbors) == 0:
+                continue
+            nl = labels[neighbors]
+            nl = nl[nl > 0]
+            if len(nl) > 0:
+                new_labels[fi] = int(np.bincount(nl).argmax())
+
+        changed = int((new_labels != labels).sum())
+        labels = new_labels
+        if changed == 0:
+            break
+
+    remaining = int((labels == 0).sum())
+    if remaining > 0 and remaining < n:
+        # Last resort: assign remaining to the most common label
+        labeled_vals = labels[labels > 0]
+        if len(labeled_vals) > 0:
+            majority = int(np.bincount(labeled_vals).argmax())
+            labels[labels == 0] = majority
+
+    log.info(f"SegviGen renderer: flood-fill complete — "
+             f"{int((labels > 0).sum())}/{n} faces labeled")
+    return labels
 
 
 def _render_trimesh_software(mesh, num_views: int, resolution: int):
@@ -253,7 +317,7 @@ def _render_pil_painter(mesh, num_views: int, resolution: int) -> list:
         depth = fv_z.mean(axis=1)
         order = np.argsort(depth)[::-1]
 
-        img = Image.new("RGB", (resolution, resolution), (240, 240, 240))
+        img = Image.new("RGB", (resolution, resolution), (30, 30, 40))
         draw = ImageDraw.Draw(img)
 
         for fi in order:
