@@ -107,12 +107,30 @@ def sample_tex_slat(
     torch_device = torch.device(device)
     compute_dtype = dtype if dtype is not None else torch.float32
 
-    # Let TRELLIS2 deserialize shape_slat using its own SparseTensor class.
-    # We MUST use stages._deserialize_from_ipc here (not our safe deserializer)
-    # because _sample_tex_slat performs arithmetic on the SparseTensor internally,
-    # and TRELLIS2's SparseTensor has different operator support than
-    # trellis2.modules.sparse.SparseTensor.
-    shape_slat = stages._deserialize_from_ipc(shape_result["shape_slat"], torch_device)
+    # Deserialize shape_slat using TRELLIS2's INTERNAL SparseTensor class
+    # (from .trellis2.sparse, NOT trellis2.modules.sparse or comfy.sparse).
+    #
+    # Why: _sample_tex_slat does arithmetic like (shape_slat - mean) / std which
+    # requires TRELLIS2's SparseTensor with operator support. We can't use:
+    #   - stages._deserialize_from_ipc: passes scale= kwarg which ComfyUI's
+    #     SparseConvTensor rejects (namespace collision in comfy.sparse)
+    #   - our _deserialize_sparse_tensor: creates trellis2.modules.sparse.SparseTensor
+    #     which lacks arithmetic operators
+    #
+    # Solution: import from the shim-loaded trellis2 subpackage directly.
+    from trellis2.sparse import SparseTensor as _InternalST
+    slat_data = shape_result["shape_slat"]
+    if isinstance(slat_data, dict) and slat_data.get("_type") == "SparseTensor":
+        _feats = slat_data["feats"].to(device=torch_device, dtype=torch.float32)
+        _coords = slat_data["coords"].to(device=torch_device)
+        shape_slat = _InternalST(feats=_feats, coords=_coords)
+    elif hasattr(slat_data, "feats") and hasattr(slat_data, "coords"):
+        shape_slat = _InternalST(
+            feats=slat_data.feats.to(device=torch_device, dtype=torch.float32),
+            coords=slat_data.coords.to(device=torch_device),
+        )
+    else:
+        raise ValueError(f"SegviGen: cannot deserialize shape_slat for tex sampling: {type(slat_data)}")
     pipeline_type = shape_result.get("pipeline_type", "512")
 
     # Determine model key and conditioning based on pipeline type
