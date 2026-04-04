@@ -107,8 +107,12 @@ def sample_tex_slat(
     torch_device = torch.device(device)
     compute_dtype = dtype if dtype is not None else torch.float32
 
-    # Deserialize shape_slat (using our safe deserializer, not stages._deserialize_from_ipc)
-    shape_slat = _deserialize_sparse_tensor(shape_result["shape_slat"], torch_device)
+    # Let TRELLIS2 deserialize shape_slat using its own SparseTensor class.
+    # We MUST use stages._deserialize_from_ipc here (not our safe deserializer)
+    # because _sample_tex_slat performs arithmetic on the SparseTensor internally,
+    # and TRELLIS2's SparseTensor has different operator support than
+    # trellis2.modules.sparse.SparseTensor.
+    shape_slat = stages._deserialize_from_ipc(shape_result["shape_slat"], torch_device)
     pipeline_type = shape_result.get("pipeline_type", "512")
 
     # Determine model key and conditioning based on pipeline type
