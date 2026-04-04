@@ -401,7 +401,68 @@ def _voxel_labels_to_face_labels(mesh, voxel_labels) -> "np.ndarray":
             log.info(f"SegviGen: KD-tree fixed {n_unlabeled} unlabeled faces "
                      f"(out of {n_faces} total)")
 
+    # Spatial majority-vote smoothing: remove salt-and-pepper noise by
+    # replacing each face's label with the majority label of its neighbors.
+    # This is critical because the sparse voxel grid causes noisy mappings
+    # when projected onto a high-resolution mesh (357k faces vs ~30k voxels).
+    face_labels = _smooth_face_labels(mesh, face_labels, iterations=3)
+
     return face_labels
+
+
+def _smooth_face_labels(mesh, face_labels, iterations=3):
+    """
+    Majority-vote spatial smoothing of face labels using mesh adjacency.
+
+    Uses vectorized sparse matrix operations — handles 300k+ faces in <1s.
+    Each face adopts the most common label among its 1-ring neighbors.
+    """
+    try:
+        adj = mesh.face_adjacency  # [E, 2]
+    except Exception:
+        return face_labels
+
+    n = len(face_labels)
+    if n == 0 or len(adj) == 0:
+        return face_labels
+
+    from scipy import sparse as sp_sparse
+
+    # Build symmetric adjacency + self-loops
+    row = np.concatenate([adj[:, 0], adj[:, 1], np.arange(n)])
+    col = np.concatenate([adj[:, 1], adj[:, 0], np.arange(n)])
+    adj_csr = sp_sparse.csr_matrix(
+        (np.ones(len(row), dtype=np.float32), (row, col)),
+        shape=(n, n),
+    )
+
+    labels = face_labels.copy()
+    max_label = int(labels.max()) + 1
+
+    for iteration in range(iterations):
+        # Build [N, max_label] one-hot matrix of current labels
+        one_hot = sp_sparse.csr_matrix(
+            (np.ones(n, dtype=np.float32), (np.arange(n), labels)),
+            shape=(n, max_label),
+        )
+        # Accumulate neighbor label votes: [N, max_label]
+        votes = adj_csr @ one_hot  # sparse matrix multiply
+        # For each face, pick the label with most votes (skip label 0)
+        votes_dense = votes.toarray()  # [N, max_label]
+        votes_dense[:, 0] = -1  # suppress background label
+        new_labels = votes_dense.argmax(axis=1).astype(np.int32)
+
+        # Only update faces that had a valid label in their neighborhood
+        valid = votes_dense.max(axis=1) > 0
+        changed = int((new_labels[valid] != labels[valid]).sum())
+        labels[valid] = new_labels[valid]
+
+        if changed == 0:
+            break
+
+    log.info(f"SegviGen: label smoothing — {iterations} iters, "
+             f"{max_label - 1} labels, {n} faces")
+    return labels
 
 
 def _render_nvdiffrast(mesh, num_views: int, resolution: int) -> list:

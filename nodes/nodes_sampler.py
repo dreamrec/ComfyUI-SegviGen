@@ -338,7 +338,7 @@ class SegviGenFullSampler:
         labels, labels_source, decoded_voxels = decode_seg_result(
             seg_latent, subs, coords_np, vr,
             mode=decode_mode,
-            grid_resolution=min(vr, 64),
+            grid_resolution=min(vr, 128),
         )
 
         mm.soft_empty_cache()
@@ -647,7 +647,7 @@ class SegviGenInteractiveSampler:
         from core.contracts import build_segvigen_seg_result, MODE_INTERACTIVE_BINARY
 
         subs = slat.get("subs")
-        grid_res = min(voxel_resolution, 64)
+        grid_res = min(voxel_resolution, 128)
 
         labels, labels_source, decoded_voxels = decode_seg_result(
             result.samples, subs, coords_np, voxel_resolution,
