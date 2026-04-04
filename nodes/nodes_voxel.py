@@ -200,7 +200,11 @@ class SegviGenVoxelEncode:
                 f"shape_slat={shape_slat.feats.shape}, tex_slat={tex_slat.feats.shape}"
             )
         except Exception as e:
-            log.warning(f"SegviGen: tex sampling failed ({e}); using shape_only mode")
+            import traceback
+            log.warning(
+                f"SegviGen: tex sampling failed — falling back to shape_only mode.\n"
+                f"Error: {e}\n{traceback.format_exc()}"
+            )
             tex_slat = None
             subs = None
             source = SOURCE_SHAPE_ONLY

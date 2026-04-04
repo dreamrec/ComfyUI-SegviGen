@@ -447,11 +447,15 @@ class SegviGenInteractiveSampler:
         if slat.get("source") == SOURCE_SHAPE_ONLY:
             if not allow_legacy_shape_only_fallback:
                 raise ValueError(
-                    "SegviGen: SLAT has source='shape_only' (no tex_slat). "
-                    "Interactive segmentation requires real tex_slat for faithful results. "
-                    "Connect SegviGenVoxelEncode (not SegviGenFromShapeResult) with "
-                    "conditioning to produce tex_slat. To override, enable "
-                    "'allow_legacy_shape_only_fallback' in the advanced options."
+                    "SegviGen: SLAT has source='shape_only' (no tex_slat).\n\n"
+                    "This usually means SegviGenVoxelEncode failed to sample tex_slat.\n"
+                    "Check the ComfyUI terminal/logs for the original error.\n\n"
+                    "Common causes:\n"
+                    "  - TRELLIS2 pipeline.json not found (check models/trellis2/)\n"
+                    "  - VRAM exhaustion during tex flow model sampling\n"
+                    "  - Incompatible TRELLIS2 version\n\n"
+                    "To run with degraded quality anyway, enable\n"
+                    "'allow_legacy_shape_only_fallback' in the node's advanced options."
                 )
             log.warning(
                 "SegviGen: SLAT has source='shape_only' — legacy fallback enabled. "
