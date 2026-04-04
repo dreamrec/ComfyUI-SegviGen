@@ -216,7 +216,7 @@ class SegviGenFullSampler:
         # but the wrapper is needed for the upstream 2N tex_slat interleaving
         # architecture that SLatFlowModel.forward() alone cannot do.
         dummy_seg_embed = torch.zeros(1, 1536)
-        gen = Gen3DSegInteractive(flow_model.model, dummy_seg_embed)
+        gen = Gen3DSegInteractive(flow_model._flow, dummy_seg_embed)
         gen = gen.to(device=device)
         gen.flow_model.convert_to(dtype)
         gen.eval()
